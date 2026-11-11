@@ -662,7 +662,7 @@ const daysLeftLabel = (ym) => {
 function todayBanners(today) {
   const out = [];
   const ym = ymOf(today), prev = addMonths(ym, -1), dayN = +today.slice(8);
-  if (state.months[prev] && !state.months[prev].reviewedAt && loggedDaysIn(prev) && dayN <= 14) {
+  if (state.months[prev] && !state.months[prev].reviewedAt && loggedDaysIn(prev) && dayN <= 3) {
     out.push(`<button class="banner review" data-go="#review/${prev}">${MONTHS[+prev.slice(5) - 1]} is done. <b>Review your month and set up ${MONTHS[+ym.slice(5) - 1]} →</b></button>`);
   } else if (dayN === daysInMonth(ym) && loggedDaysIn(ym)) {
     out.push(`<div class="banner locked">Last day of ${MONTHS[+ym.slice(5) - 1]}. Your recap unlocks tomorrow.</div>`);
