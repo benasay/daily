@@ -221,9 +221,60 @@ function renderToday(view, date) {
     refresh(); save();
   }));
   document.getElementById('note').addEventListener('input', (ev) => { e.note = ev.target.value; save(); });
-  document.getElementById('prev').addEventListener('click', () => go(`#today/${addDays(date, -1)}`));
-  document.getElementById('next').addEventListener('click', () => go(addDays(date, 1) >= today ? '#today' : `#today/${addDays(date, 1)}`));
+  document.getElementById('prev').addEventListener('click', () => { slideFrom = 'left'; go(`#today/${addDays(date, -1)}`); });
+  document.getElementById('next').addEventListener('click', () => { slideFrom = 'right'; go(addDays(date, 1) >= today ? '#today' : `#today/${addDays(date, 1)}`); });
+
+  // Slide the new day in from the side it came from (set by the arrows or a swipe)
+  if (slideFrom) {
+    view.classList.remove('slide-from-left', 'slide-from-right');
+    void view.offsetWidth; // restart the animation
+    view.classList.add(`slide-from-${slideFrom}`);
+    slideFrom = null;
+  }
 }
+
+/* ---------- swipe between days on the Today tab ----------
+   Swipe right = previous day, swipe left = next day. Reuses the arrow buttons,
+   so it behaves exactly like tapping them (including stopping at today). */
+let slideFrom = null;
+(function enableDaySwipe() {
+  const view = document.getElementById('view');
+  const onToday = () => !!document.getElementById('note'); // only the Today screen has the note field
+  let startX = 0, startY = 0, dx = 0, tracking = false, horizontal = null;
+
+  view.addEventListener('touchstart', (e) => {
+    if (!onToday() || e.touches.length !== 1) return;
+    // Leave text editing alone so selecting/moving the cursor never changes the day
+    if (e.target.closest('textarea, input, select')) return;
+    startX = e.touches[0].clientX; startY = e.touches[0].clientY;
+    dx = 0; tracking = true; horizontal = null;
+  }, { passive: true });
+
+  view.addEventListener('touchmove', (e) => {
+    if (!tracking) return;
+    const mx = e.touches[0].clientX - startX, my = e.touches[0].clientY - startY;
+    if (horizontal === null && (Math.abs(mx) > 8 || Math.abs(my) > 8)) horizontal = Math.abs(mx) > Math.abs(my) * 1.2;
+    if (!horizontal) return;
+    dx = mx;
+    const atToday = document.getElementById('next')?.disabled;
+    const resist = dx < 0 && atToday ? 0.15 : 0.45; // rubber-band when there's no next day
+    view.style.transition = 'none';
+    view.style.transform = `translateX(${dx * resist}px)`;
+    view.style.opacity = String(1 - Math.min(Math.abs(dx) / 900, 0.25));
+  }, { passive: true });
+
+  const end = () => {
+    if (!tracking) return;
+    tracking = false;
+    view.style.transition = 'transform .2s ease, opacity .2s ease';
+    view.style.transform = ''; view.style.opacity = '';
+    if (!horizontal || Math.abs(dx) < 60) return;
+    const btn = document.getElementById(dx > 0 ? 'prev' : 'next');
+    if (btn && !btn.disabled) { btn.click(); if (navigator.vibrate) navigator.vibrate(6); }
+  };
+  view.addEventListener('touchend', end);
+  view.addEventListener('touchcancel', end);
+})();
 
 /* =========================================================
    MONTH
