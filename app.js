@@ -122,14 +122,16 @@ function toast(msg) {
 
 /* ---------- routing ---------- */
 function route() {
-  const [tab = 'today', arg, arg2] = location.hash.replace(/^#\/?/, '').split('/');
+  const [tab = 'today', arg, arg2, arg3] = location.hash.replace(/^#\/?/, '').split('/');
+  document.body.classList.remove('story-mode');
+  storyCleanup();
   document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   const view = document.getElementById('view');
   const today = todayStr();
   if (tab === 'month') renderMonth(view, arg || ymOf(today));
   else if (tab === 'insights') renderInsights(view, arg || ymOf(today));
   else if (tab === 'goals') renderGoals(view, arg || ymOf(today));
-  else if (tab === 'review') { document.querySelector('.tabs [data-tab="insights"]').classList.add('active'); renderReview(view, arg || addMonths(ymOf(today), -1), +arg2 || 1); }
+  else if (tab === 'review') { document.querySelector('.tabs [data-tab="insights"]').classList.add('active'); renderReview(view, arg || addMonths(ymOf(today), -1), +arg2 || 1, arg3); }
   else if (tab === 'import') { document.querySelector('.tabs [data-tab="goals"]').classList.add('active'); renderImport(view); }
   else renderToday(view, arg && arg <= today ? arg : today);
   window.scrollTo(0, 0);
@@ -681,7 +683,7 @@ function goalSuggestion(p, a) {
   return { tag: `On track · ${pct(p.rate)}`, tone: '', text: '' };
 }
 
-function renderReview(view, ym, step) {
+function renderReview(view, ym, step, opt) {
   const a = analyze(ym);
   const next = addMonths(ym, 1);
   const mName = MONTHS[+ym.slice(5) - 1], nName = MONTHS[+next.slice(5) - 1];
@@ -701,29 +703,10 @@ function renderReview(view, ym, step) {
     bindGo(view); return;
   }
 
+  if (step === 1) { renderStory(view, ym, a, opt === 'end'); return; }
+
   let body = '';
-  if (step === 1) {
-    const perfect = a.logged.filter((d) => d.score === a.goals.length && a.goals.length).length;
-    const top = [...a.perGoal].sort((x, y) => y.rate - x.rate).slice(0, 3);
-    const best = [...a.logged].sort((x, y) => y.score - x.score || y.day - x.day).filter((d) => d.entry.note).slice(0, 3);
-    const improved = goalTrends(ym).filter((t) => t.delta !== null && t.delta >= 0.1).sort((x, y) => y.delta - x.delta).slice(0, 3);
-    body = `
-      <div class="stats">
-        <div class="stat"><div class="k">Days logged</div><div class="v">${a.N}<span class="sub" style="font-size:13px;display:inline"> / ${a.days.length}</span></div></div>
-        <div class="stat"><div class="k">Avg / day</div><div class="v">${round1(a.avg)}</div></div>
-        <div class="stat"><div class="k">Perfect days</div><div class="v">${perfect}</div></div>
-      </div>
-      <h2>Your month</h2>
-      <div class="card chart-wrap" id="reviewChart"></div>
-      <h2>Best days</h2>
-      <ol class="moments">${best.map((d) => `<li><span class="d">${d.day}</span><span class="t">${esc(d.entry.note)}</span><span class="c">${d.score}/${a.goals.length}</span></li>`).join('') || '<li><span class="t">No notes this month.</span></li>'}</ol>
-      <h2>Wins</h2>
-      <ul class="recs">
-        ${top.map((p) => `<li><b>${esc(p.g.name)}</b> hit ${p.hits} of ${a.N} days (${pct(p.rate)})${p.bestStreak >= 3 ? `, with a best streak of ${p.bestStreak} days` : ''}.</li>`).join('')}
-        ${improved.map((t) => `<li><b>${esc(t.g.name)}</b> improved ${Math.round(t.delta * 100)} points over the previous month.</li>`).join('')}
-        <li>Longest logging streak: <b>${bestLogStreakIn(ym)} days</b> in a row.</li>
-      </ul>`;
-  } else if (step === 2) {
+  if (step === 2) {
     body = `
       <h2>Recommendations</h2>
       <ul class="recs">${a.recs.map((r) => `<li>${r}</li>`).join('') || '<li>Nothing stands out. A steady month.</li>'}</ul>
@@ -771,13 +754,12 @@ function renderReview(view, ym, step) {
 
   view.innerHTML = `${head}${body}
     <div class="review-nav">
-      ${step > 1 ? `<button class="btn" data-go="${nav(step - 1)}">Back</button>` : '<span></span>'}
+      ${step > 1 ? `<button class="btn" data-go="${step === 2 ? `#review/${ym}/1/end` : nav(step - 1)}">Back</button>` : '<span></span>'}
       ${step < 3 ? `<button class="btn primary" data-go="${nav(step + 1)}">Next</button>`
                  : `<button class="btn primary" id="finishReview">Start ${nName}</button>`}
     </div>`;
   bindGo(view);
 
-  if (step === 1) drawLineChart(document.getElementById('reviewChart'), ym, a.days, a.goals.length);
   if (step === 2) document.getElementById('copyAI').addEventListener('click', async () => {
     const text = aiPrompt(ym, a);
     try { await navigator.clipboard.writeText(text); toast('Copied. Paste it into Claude'); } catch { prompt('Copy this:', text); }
@@ -813,6 +795,182 @@ function renderReview(view, ym, step) {
       go(next <= ymOf(todayStr()) ? '#today' : `#goals/${next}`);
     });
   }
+}
+
+
+/* =========================================================
+   REVIEW STORY: a full-screen, one-stat-per-screen recap.
+   Auto-advances; tap right = next, tap left = back, hold = pause.
+   ========================================================= */
+let storyCleanup = () => {};
+
+function renderStory(view, ym, a, startAtEnd) {
+  const mName = MONTHS[+ym.slice(5) - 1];
+  const next = addMonths(ym, 1), nName = MONTHS[+next.slice(5) - 1];
+  const G = a.goals.length;
+  const perfect = a.logged.filter((d) => d.score === G && G).length;
+  const streak = bestLogStreakIn(ym);
+  const ranked = [...a.perGoal].sort((x, y) => y.rate - x.rate || y.hits - x.hits);
+  const improved = goalTrends(ym).filter((t) => t.delta !== null && t.delta >= 0.1).sort((x, y) => y.delta - x.delta);
+  const bestDay = [...a.logged].sort((x, y) => y.score - x.score || (y.entry.note ? 1 : 0) - (x.entry.note ? 1 : 0) || x.day - y.day)[0];
+  const seen = new Set();
+  const notes = [...a.logged].filter((d) => d.entry.note).sort((x, y) => y.score - x.score || x.day - y.day)
+    .filter((d) => { const k = d.entry.note.trim().toLowerCase(); return seen.has(k) ? false : seen.add(k); }).slice(0, 4).sort((x, y) => x.day - y.day);
+  const wds = a.weekday.filter((w) => w.n >= 2);
+  const strongWd = wds.length >= 4 ? wds.reduce((p, w) => (w.avg > p.avg ? w : p)) : null;
+  const fullWd = (w) => ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays'][WEEKDAYS.indexOf(w.name)];
+  const weakest = ranked[ranked.length - 1];
+  const mon = mName.slice(0, 3);
+  const num = (v, dec = 0, suffix = '') => `<span class="count" data-to="${v}" data-dec="${dec}">${dec ? v.toFixed(dec) : v}</span>${suffix}`;
+
+  // Sparkline of the month (draws itself in)
+  const W = 300, H = 90, n = daysInMonth(ym);
+  const px = (d) => 4 + ((d - 1) / Math.max(n - 1, 1)) * (W - 8), py = (v) => H - 6 - (v / Math.max(G, 1)) * (H - 12);
+  let path = '', prev = -9;
+  a.logged.forEach((d) => { path += `${d.day === prev + 1 ? 'L' : 'M'}${px(d.day).toFixed(1)},${py(d.score).toFixed(1)} `; prev = d.day; });
+  const spark = `<svg class="spark" viewBox="0 0 ${W} ${H}" aria-hidden="true"><path pathLength="1" d="${path}"/></svg>`;
+
+  // Mini calendar
+  const first = parseDate(`${ym}-01`).getDay();
+  const cal = `<div class="mini-cal">${'<i class="blank"></i>'.repeat(first)}${Array.from({ length: n }, (_, i) => {
+    const date = `${ym}-${pad(i + 1)}`, f = dayFraction(date);
+    return `<i class="heat-${f === null ? 'none' : heatLevel(f)}" style="--i:${i}"></i>`;
+  }).join('')}</div>`;
+
+  const slides = [];
+  slides.push({ theme: 'forest', html: `
+    <p class="eyebrow">Tally · Monthly review</p>
+    <h1 class="mega">${mName}</h1>
+    <p class="lead">Your month, in a few numbers.</p>
+    <p class="hint">Tap to continue</p>` });
+  slides.push({ theme: 'cream', html: `
+    <p class="eyebrow">You showed up</p>
+    <div class="huge">${num(a.N)}</div>
+    <p class="lead">nights logged out of ${a.days.length}</p>
+    ${streak >= 3 ? `<p class="kicker">Longest run: <b>${streak} nights in a row</b></p>` : ''}` });
+  slides.push({ theme: 'ink', html: `
+    <p class="eyebrow">On an average day</p>
+    <div class="huge">${num(+round1(a.avg), 1)}</div>
+    <p class="lead">goals hit, out of ${G}</p>
+    ${spark}
+    ${perfect ? `<p class="kicker">Plus <b>${perfect} perfect day${perfect > 1 ? 's' : ''}</b> where you hit every goal</p>` : ''}` });
+  slides.push({ theme: 'sage', html: `
+    <p class="eyebrow">Your best day</p>
+    <div class="big">${mon} ${bestDay.day}</div>
+    <p class="lead">${bestDay.score} of ${G} goals</p>
+    ${bestDay.entry.note ? `<blockquote>“${esc(bestDay.entry.note)}”</blockquote>` : ''}` });
+  slides.push({ theme: 'forest', html: `
+    <p class="eyebrow">Your top goals</p>
+    <ol class="rank">${ranked.slice(0, 5).map((p, i) => `
+      <li style="--i:${i}"><span class="rk">${i + 1}</span><span class="nm">${esc(p.g.name)}</span><span class="pc">${pct(p.rate)}</span></li>`).join('')}
+    </ol>` });
+  if (improved.length) slides.push({ theme: 'cream', html: `
+    <p class="eyebrow">Most improved</p>
+    <div class="big">${esc(improved[0].g.name)}</div>
+    <div class="huge up">+${num(Math.round(improved[0].delta * 100))}</div>
+    <p class="lead">points over last month</p>
+    ${improved.length > 1 ? `<p class="kicker">Also up: ${improved.slice(1, 3).map((t) => `<b>${esc(t.g.name)}</b>`).join(' and ')}</p>` : ''}` });
+  slides.push({ theme: 'ink', html: `
+    <p class="eyebrow">${mName} at a glance</p>
+    ${cal}
+    ${strongWd ? `<p class="lead">You were strongest on <b>${fullWd(strongWd)}</b>, with ${round1(strongWd.avg)} goals on average.</p>` : ''}` });
+  if (notes.length) slides.push({ theme: 'sage', html: `
+    <p class="eyebrow">Moments worth remembering</p>
+    <ul class="notes">${notes.map((d, i) => `<li style="--i:${i}"><span>${mon} ${d.day}</span>${esc(d.entry.note)}</li>`).join('')}</ul>` });
+  if (weakest && weakest.rate < 0.5) slides.push({ theme: 'gold', html: `
+    <p class="eyebrow">Room to grow</p>
+    <div class="big">${esc(weakest.g.name)}</div>
+    <div class="huge">${num(Math.round(weakest.rate * 100), 0, '%')}</div>
+    <p class="lead">of days. Worth a rethink for ${nName}.</p>` });
+  slides.push({ theme: 'forest', final: true, html: `
+    <p class="eyebrow">${mName} ${ym.slice(0, 4)}</p>
+    <div class="summary">
+      <div><b>${a.N}</b><span>nights logged</span></div>
+      <div><b>${round1(a.avg)}</b><span>goals / day</span></div>
+      <div><b>${streak}</b><span>longest streak</span></div>
+      <div><b>${perfect}</b><span>perfect days</span></div>
+    </div>
+    <p class="lead small">Top goal: <b>${esc(ranked[0].g.name)}</b> · ${pct(ranked[0].rate)}</p>
+    <div class="story-actions">
+      <button class="btn primary light" data-go="#review/${ym}/3">Set up ${nName} →</button>
+      <button class="btn ghost" data-go="#review/${ym}/2">See recommendations</button>
+    </div>` });
+
+  document.body.classList.add('story-mode');
+  view.innerHTML = `
+    <div class="story" role="dialog" aria-label="${mName} review">
+      <div class="story-bars">${slides.map(() => '<span><i></i></span>').join('')}</div>
+      <button class="story-close" aria-label="Close review">✕</button>
+      ${slides.map((sl, i) => `<section class="slide" data-i="${i}" data-theme="${sl.theme}" aria-hidden="true">${sl.html}</section>`).join('')}
+    </div>`;
+
+  const root = view.querySelector('.story');
+  const bars = [...root.querySelectorAll('.story-bars span')];
+  const els = [...root.querySelectorAll('.slide')];
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const DUR = 6000;
+  let idx = -1, paused = false;
+
+  const countUp = (slide) => slide.querySelectorAll('.count').forEach((el) => {
+    const to = +el.dataset.to, dec = +el.dataset.dec;
+    if (reduce) { el.textContent = to.toFixed(dec); return; }
+    const t0 = performance.now(), dur = 900;
+    const tick = (t) => {
+      const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+      el.textContent = (to * e).toFixed(dec);
+      if (k < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+
+  const show = (i) => {
+    if (i < 0) i = 0;
+    if (i >= slides.length) i = slides.length - 1;
+    idx = i;
+    root.dataset.theme = slides[i].theme;
+    els.forEach((el, j) => { el.classList.toggle('active', j === i); el.setAttribute('aria-hidden', j !== i); });
+    bars.forEach((b, j) => {
+      b.className = j < i ? 'done' : j === i ? (slides[i].final ? 'done' : 'run') : '';
+      const fill = b.querySelector('i');
+      fill.style.animation = 'none'; void fill.offsetWidth; fill.style.animation = '';
+      fill.style.animationDuration = `${DUR}ms`;
+    });
+    root.classList.toggle('paused', paused = false);
+    countUp(els[i]);
+  };
+  bars.forEach((b) => b.querySelector('i').addEventListener('animationend', () => { if (b.classList.contains('run')) show(idx + 1); }));
+
+  // Tap / hold
+  let downAt = 0, downX = 0, moved = false;
+  root.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('button')) return;
+    downAt = performance.now(); downX = e.clientX; moved = false;
+    root.classList.add('paused'); paused = true;
+  });
+  root.addEventListener('pointermove', (e) => { if (downAt && Math.abs(e.clientX - downX) > 12) moved = true; });
+  const release = (e) => {
+    if (!downAt) return;
+    const held = performance.now() - downAt;
+    downAt = 0;
+    root.classList.remove('paused'); paused = false;
+    if (held > 300 || moved || e.type === 'pointercancel') return; // that was a hold
+    const r = root.getBoundingClientRect();
+    if (e.clientX - r.left < r.width * 0.3) show(idx - 1); else if (!slides[idx].final) show(idx + 1);
+  };
+  root.addEventListener('pointerup', release);
+  root.addEventListener('pointercancel', release);
+
+  const onKey = (e) => {
+    if (e.key === 'ArrowRight' || e.key === ' ') show(idx + 1);
+    else if (e.key === 'ArrowLeft') show(idx - 1);
+    else if (e.key === 'Escape') go(`#insights/${ym}`);
+  };
+  document.addEventListener('keydown', onKey);
+  storyCleanup = () => { document.removeEventListener('keydown', onKey); storyCleanup = () => {}; };
+
+  root.querySelector('.story-close').addEventListener('click', () => go(`#insights/${ym}`));
+  bindGo(root);
+  show(startAtEnd ? slides.length - 1 : 0);
 }
 
 function bindGo(view) {
