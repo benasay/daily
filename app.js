@@ -11,7 +11,7 @@
    Goals keep their id when copied to a new month, so trends can be compared across months.
    ========================================================= */
 
-const KEY = 'daily-goals-v1';
+const KEY = 'daily-goals-v1'; // storage key: keep as-is so existing data survives the rename
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
@@ -640,7 +640,7 @@ function renderGoals(view, ym) {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `daily-backup-${todayStr()}.json`;
+    a.download = `tally-backup-${todayStr()}.json`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   });
@@ -652,7 +652,7 @@ function renderGoals(view, ym) {
       if (!data.months || !data.days) throw new Error('bad file');
       if (!confirm('Replace all data on this device with this backup?')) return;
       state = data; save(true); toast('Backup restored'); route();
-    } catch { alert("That file doesn't look like a Daily backup."); }
+    } catch { alert("That file doesn't look like a Tally backup."); }
   });
 }
 

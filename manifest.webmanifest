@@ -1,6 +1,6 @@
 {
-  "name": "Daily",
-  "short_name": "Daily",
+  "name": "Tally",
+  "short_name": "Tally",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
