@@ -118,17 +118,22 @@ function targetText(g) {
    Only works in response to a tap/swipe; silently does nothing on older iOS. */
 const HAPTIC_KEY = 'tally-haptics'; // per-device preference
 const hapticsOn = () => localStorage.getItem(HAPTIC_KEY) !== 'off';
+// A real (but invisible) switch that stays in the page, rather than a throwaway hidden one:
+// some iOS browsers only play the haptic for a switch that is actually rendered.
+let hapticLabel = null;
 function iosTick() {
-  const label = document.createElement('label');
-  label.setAttribute('aria-hidden', 'true');
-  label.style.display = 'none';
-  const input = document.createElement('input');
-  input.type = 'checkbox';
-  input.setAttribute('switch', '');
-  label.appendChild(input);
-  document.head.appendChild(label);
-  label.click();
-  label.remove();
+  if (!hapticLabel || !hapticLabel.isConnected) {
+    hapticLabel = document.createElement('label');
+    hapticLabel.setAttribute('aria-hidden', 'true');
+    hapticLabel.style.cssText = 'position:fixed;left:0;bottom:0;width:1px;height:1px;opacity:0.01;overflow:hidden;pointer-events:none;z-index:-1';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.setAttribute('switch', '');
+    input.tabIndex = -1;
+    hapticLabel.appendChild(input);
+    document.body.appendChild(hapticLabel);
+  }
+  hapticLabel.click();
 }
 /** kind: 'tap' (toggle, page turn) | 'success' (perfect day, finished review) */
 function haptic(kind = 'tap') {
