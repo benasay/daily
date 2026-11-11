@@ -243,3 +243,29 @@ main.slide-from-left { animation: slideFromLeft .22s ease-out; }
 @media (prefers-reduced-motion: reduce) {
   main.slide-from-right, main.slide-from-left { animation: none; }
 }
+
+/* Import from photo */
+ol.steps { padding-left: 22px; margin: 8px 0 0; display: flex; flex-direction: column; gap: 18px; font-size: 16px; line-height: 1.45; }
+ol.steps li::marker { color: var(--accent); font-weight: 700; }
+ol.steps .actions { margin-top: 8px; }
+ol.steps textarea { margin-top: 8px; }
+.imp-ym { font: inherit; font-size: 17px; font-weight: 600; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+.warn { background: #FFF6E5; color: #6B4A00; border: 1px solid #F0DDB0; border-radius: var(--radius); padding: 10px 12px; font-size: 14px; margin: 12px 0 0; }
+.unsure { background: var(--accent-soft); border-radius: var(--radius); padding: 10px 14px; font-size: 14px; margin-top: 12px; }
+.unsure ul { margin: 6px 0 0; padding-left: 18px; }
+@media (prefers-color-scheme: dark) { .warn { background: #3A3020; color: #F2D9A0; border-color: #5A4A2A; } }
+.ge input.need { border-color: var(--danger); }
+table.imp-grid td { padding: 2px; }
+table.imp-grid button.cell {
+  width: 26px; height: 26px; border-radius: 6px; border: 1.5px solid var(--line); background: var(--card);
+  display: grid; place-items: center; padding: 0; cursor: pointer; margin: 0 auto;
+}
+table.imp-grid button.cell svg { width: 14px; height: 14px; fill: none; stroke: var(--accent-ink); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; opacity: 0; }
+table.imp-grid button.cell.on { background: var(--accent); border-color: var(--accent); }
+table.imp-grid button.cell.on svg { opacity: 1; }
+table.imp-grid input.cell-num { width: 44px; font: inherit; font-size: 13px; text-align: center; padding: 4px 2px; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+table.imp-grid tbody tr { cursor: default; }
+.imp-notes { display: flex; flex-direction: column; gap: 6px; }
+.imp-note { display: flex; align-items: center; gap: 8px; }
+.imp-note .d { width: 22px; text-align: right; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; flex: none; }
+.imp-note input { flex: 1; min-width: 0; font: inherit; font-size: 15px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--ink); }

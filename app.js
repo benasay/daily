@@ -128,6 +128,7 @@ function route() {
   if (tab === 'month') renderMonth(view, arg || ymOf(today));
   else if (tab === 'insights') renderInsights(view, arg || ymOf(today));
   else if (tab === 'goals') renderGoals(view, arg || ymOf(today));
+  else if (tab === 'import') { document.querySelector('.tabs [data-tab="goals"]').classList.add('active'); renderImport(view); }
   else renderToday(view, arg && arg <= today ? arg : today);
   window.scrollTo(0, 0);
 }
@@ -643,6 +644,10 @@ function renderGoals(view, ym) {
       ${state.months[prevYm] ? `<button class="btn" id="copyPrev">Copy ${MONTHS[+prevYm.slice(5) - 1]}'s goals</button>` : ''}
     </div>
 
+    <h2>Import past months</h2>
+    <p class="help">Have older months in a paper journal? Turn photos of the pages into Tally data.</p>
+    <div class="actions"><a class="btn" href="#import" style="text-decoration:none">Import from photo</a></div>
+
     <h2>Backup</h2>
     <p class="help">Your data lives only on this device. Export a backup now and then (it's a small file). Import restores it on any device.</p>
     <div class="actions">
@@ -704,6 +709,319 @@ function renderGoals(view, ym) {
       if (!confirm('Replace all data on this device with this backup?')) return;
       state = data; save(true); toast('Backup restored'); route();
     } catch { alert("That file doesn't look like a Tally backup."); }
+  });
+}
+
+
+/* =========================================================
+   IMPORT FROM PHOTO
+   Free flow: Tally copies instructions → you send them + page photos to Claude →
+   paste Claude's JSON reply back → review/fix → save.
+   ========================================================= */
+let importDraft = null; // { months: [{ ym, goals:[{name,type,dir,target,unit}], days:{n:{note,hits:Set<idx>,values:{idx:num}}}, unsure:[] }] }
+
+function importInstructions() {
+  const year = todayStr().slice(0, 4);
+  return `I'm attaching photos of my handwritten monthly habit journal. Please convert them into data I can import into my tracking app.
+
+Each month usually has:
+- A "memorable moments" list: one short line per day, numbered by day of the month.
+- A tracker grid: one row per day, one column per goal. A mark (X, check, dot, etc.) means I hit that goal that day. Some columns hold numbers instead of marks (for example hours of screen time).
+- A totals row and a line graph. Don't import these, but use the totals row to double-check your counts.
+
+Reply with ONLY one JSON code block in exactly this shape, with one entry per month you can see:
+
+{"months":[{
+  "month": "YYYY-MM",
+  "goals": [
+    {"name": "Exercise", "type": "check"},
+    {"name": "Screen time", "type": "number", "dir": "atMost", "target": null, "unit": "h"}
+  ],
+  "days": [
+    {"day": 1, "note": "Christmas + New Year's = record player and pinball", "hits": ["Exercise"], "values": {"Screen time": 3.5}}
+  ],
+  "unsure": ["Day 14: couldn't tell if Meditation was marked"]
+}]}
+
+Rules:
+- List goals in the column order they appear. Write names out cleanly and expand obvious abbreviations.
+- Use "type": "number" only for columns that contain numbers. "dir" is "atMost" if lower is better (like screen time) or "atLeast" if higher is better. Use "target": null unless a target is written on the page.
+- "hits" lists the exact goal names that are marked that day (check goals only). "values" holds the numbers for number goals.
+- Copy each day's note as written, fixing only obvious spelling. Leave out days with no note and no marks.
+- If a mark, number, or word is unclear, make your best guess and add a short line about it to "unsure". If a goal's count doesn't match the totals row, mention that in "unsure" too.
+- If the year isn't visible, assume ${year}.`;
+}
+
+function parseImport(text) {
+  let t = text.trim();
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) t = fence[1];
+  const a = t.indexOf('{'), b = t.lastIndexOf('}');
+  if (a < 0 || b < a) throw new Error("Couldn't find any data in that text. Make sure you copied Claude's whole reply.");
+  let data;
+  try { data = JSON.parse(t.slice(a, b + 1)); } catch { throw new Error("The pasted text isn't complete. Copy Claude's entire reply (the code block) and try again."); }
+  const list = Array.isArray(data) ? data : data.months ? data.months : [data];
+  if (!list.length) throw new Error('No months found in the pasted text.');
+
+  return {
+    months: list.map((m) => {
+      const goals = (m.goals || []).filter((g) => g && g.name).map((g) => {
+        const isNum = g.type === 'number';
+        // Reuse the target from an existing goal with the same name, if you've set one before
+        const prior = isNum ? findGoalByName(g.name) : null;
+        return {
+          name: String(g.name).trim(),
+          type: isNum ? 'number' : 'check',
+          dir: isNum ? (g.dir === 'atLeast' ? 'atLeast' : 'atMost') : undefined,
+          target: isNum ? (typeof g.target === 'number' ? g.target : prior?.type === 'number' ? prior.target : null) : undefined,
+          unit: isNum ? (g.unit ?? prior?.unit ?? '') : undefined,
+        };
+      });
+      const idxOf = (name) => goals.findIndex((g) => g.name.toLowerCase() === String(name).trim().toLowerCase());
+      const ym = /^\d{4}-\d{2}$/.test(m.month || '') ? m.month : ymOf(todayStr());
+      const days = {};
+      (m.days || []).forEach((d) => {
+        const n = parseInt(d.day, 10);
+        if (!(n >= 1 && n <= 31)) return;
+        const hits = new Set((d.hits || []).map(idxOf).filter((i) => i >= 0 && goals[i].type === 'check'));
+        const values = {};
+        Object.entries(d.values || {}).forEach(([k, v]) => {
+          const i = idxOf(k);
+          if (i >= 0 && goals[i].type === 'number' && v !== null && v !== '' && !Number.isNaN(Number(v))) values[i] = Number(v);
+        });
+        days[n] = { note: String(d.note || '').trim(), hits, values };
+      });
+      return { ym, goals, days, unsure: (m.unsure || []).map(String) };
+    }),
+  };
+}
+
+function findGoalByName(name) {
+  const key = String(name).trim().toLowerCase();
+  const months = Object.keys(state.months).sort().reverse();
+  for (const ym of months) {
+    const g = state.months[ym].goals.find((x) => x.name.trim().toLowerCase() === key);
+    if (g) return g;
+  }
+  return null;
+}
+
+function loggedDaysIn(ym) {
+  return Object.keys(state.days).filter((d) => d.startsWith(ym + '-') && isLogged(state.days[d])).length;
+}
+
+function renderImport(view) {
+  if (!importDraft) return renderImportPaste(view);
+  renderImportReview(view);
+}
+
+function renderImportPaste(view) {
+  view.innerHTML = `
+    <div class="row date-head">
+      <button class="icon-btn" onclick="location.hash='#goals'" aria-label="Back">‹</button>
+      <div class="title"><h1>Import from photo</h1></div>
+      <span style="width:40px"></span>
+    </div>
+
+    <ol class="steps">
+      <li>
+        <b>Copy the instructions.</b>
+        <div class="actions"><button class="btn primary" id="copyInstr">Copy instructions</button></div>
+      </li>
+      <li>
+        <b>Open Claude</b>, start a new chat, attach photos of your journal pages, and paste the instructions.
+        <p class="help">Send several months at once if you like. A clear, straight-on, well-lit photo of each page works best: both the moments list and the tracker grid.</p>
+      </li>
+      <li>
+        <b>Copy Claude's whole reply</b> and paste it here.
+        <label class="sr-only" for="importText">Claude's reply</label>
+        <textarea class="note" id="importText" placeholder="Paste Claude's reply here…" style="min-height:120px;font-size:14px;font-family:ui-monospace,Menlo,monospace"></textarea>
+        <p class="help" id="importErr" style="color:var(--danger)"></p>
+        <div class="actions"><button class="btn primary" id="readIt">Review import</button></div>
+      </li>
+    </ol>
+  `;
+  document.getElementById('copyInstr').addEventListener('click', async () => {
+    const text = importInstructions();
+    try { await navigator.clipboard.writeText(text); toast('Copied. Now paste it into Claude'); }
+    catch { prompt('Copy this:', text); }
+  });
+  document.getElementById('readIt').addEventListener('click', () => {
+    try {
+      importDraft = parseImport(document.getElementById('importText').value);
+      renderImportReview(view); window.scrollTo(0, 0);
+    } catch (e) { document.getElementById('importErr').textContent = e.message; }
+  });
+}
+
+function renderImportReview(view) {
+  const draft = importDraft;
+  const CHECK = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg>';
+
+  view.innerHTML = `
+    <div class="row date-head">
+      <button class="icon-btn" id="backPaste" aria-label="Back">‹</button>
+      <div class="title"><h1>Review import</h1><p class="sub">${draft.months.length} month${draft.months.length > 1 ? 's' : ''}. Check against your photo, tap cells to fix</p></div>
+      <span style="width:40px"></span>
+    </div>
+
+    ${draft.months.map((m, mi) => {
+      const dim = daysInMonth(m.ym);
+      const existing = loggedDaysIn(m.ym);
+      return `
+      <section class="imp-month" data-mi="${mi}">
+        <div class="row spread" style="margin-top:22px">
+          <input type="month" class="imp-ym" value="${m.ym}" aria-label="Month">
+          <button class="btn small danger imp-drop">Skip this month</button>
+        </div>
+        ${existing ? `<p class="warn">You already have ${existing} logged day${existing > 1 ? 's' : ''} in ${monthLabel(m.ym)}. Saving replaces them.</p>` : ''}
+        ${m.unsure.length ? `<div class="unsure"><b>Double-check these</b><ul>${m.unsure.map((u) => `<li>${esc(u)}</li>`).join('')}</ul></div>` : ''}
+
+        <h2>Goals</h2>
+        <div class="goal-edit">
+          ${m.goals.map((g, gi) => `
+            <div class="ge" data-gi="${gi}">
+              <div class="row">
+                <input class="name" value="${esc(g.name)}" aria-label="Goal name">
+                <div class="ctrl"><button class="imp-gdel" aria-label="Remove goal">✕</button></div>
+              </div>
+              <div class="num-opts">
+                <select class="imp-type" aria-label="Goal type">
+                  <option value="check" ${g.type === 'check' ? 'selected' : ''}>Yes / no</option>
+                  <option value="number" ${g.type === 'number' ? 'selected' : ''}>Number</option>
+                </select>
+                ${g.type === 'number' ? `
+                  <select class="imp-dir" aria-label="Direction">
+                    <option value="atMost" ${g.dir !== 'atLeast' ? 'selected' : ''}>at most</option>
+                    <option value="atLeast" ${g.dir === 'atLeast' ? 'selected' : ''}>at least</option>
+                  </select>
+                  <input class="target ${g.target === null || g.target === undefined ? 'need' : ''}" type="number" inputmode="decimal" step="any" value="${esc(g.target ?? '')}" placeholder="target" aria-label="Target">
+                  <input class="unit" value="${esc(g.unit || '')}" placeholder="unit" aria-label="Unit">` : ''}
+              </div>
+            </div>`).join('')}
+        </div>
+
+        <h2>Tracker</h2>
+        <div class="card grid-table">
+          <table class="tracker imp-grid">
+            <thead><tr><th></th>${m.goals.map((g) => `<th class="gname">${esc(g.name)}</th>`).join('')}</tr></thead>
+            <tbody>
+              ${Array.from({ length: dim }, (_, i) => i + 1).map((n) => {
+                const d = m.days[n] || { hits: new Set(), values: {} };
+                return `<tr data-day="${n}"><td class="d">${n}</td>${m.goals.map((g, gi) => g.type === 'number'
+                  ? `<td><input class="cell-num" data-gi="${gi}" type="number" inputmode="decimal" step="any" value="${esc(d.values[gi] ?? '')}" aria-label="Day ${n} ${esc(g.name)}"></td>`
+                  : `<td><button class="cell ${d.hits.has(gi) ? 'on' : ''}" data-gi="${gi}" aria-pressed="${d.hits.has(gi)}" aria-label="Day ${n} ${esc(g.name)}">${CHECK}</button></td>`).join('')}</tr>`;
+              }).join('')}
+              <tr class="totals"><td class="d">Σ</td>${m.goals.map((g, gi) => `<td class="imp-tot" data-gi="${gi}"></td>`).join('')}</tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h2>Memorable moments</h2>
+        <div class="imp-notes">
+          ${Array.from({ length: dim }, (_, i) => i + 1).map((n) => `
+            <label class="imp-note"><span class="d">${n}</span><input data-day="${n}" value="${esc(m.days[n]?.note || '')}" placeholder="—"></label>`).join('')}
+        </div>
+      </section>`;
+    }).join('')}
+
+    <p class="help" id="saveErr" style="color:var(--danger)"></p>
+    <div class="actions" style="margin-top:20px">
+      <button class="btn primary" id="saveImport" ${draft.months.length ? '' : 'disabled'}>Save ${draft.months.length > 1 ? 'all months' : 'month'}</button>
+      <button class="btn" id="cancelImport">Cancel</button>
+    </div>
+  `;
+
+  const rerender = () => { const y = window.scrollY; renderImportReview(view); window.scrollTo(0, y); };
+  const dayOf = (m, n) => (m.days[n] ||= { note: '', hits: new Set(), values: {} });
+  const updateTotals = (sec, m) => sec.querySelectorAll('.imp-tot').forEach((td) => {
+    const gi = +td.dataset.gi, g = m.goals[gi];
+    td.textContent = Object.values(m.days).filter((d) => g.type === 'number' ? d.values[gi] !== undefined : d.hits.has(gi)).length;
+  });
+
+  view.querySelectorAll('.imp-month').forEach((sec) => {
+    const m = draft.months[+sec.dataset.mi];
+    updateTotals(sec, m);
+    sec.querySelector('.imp-ym').addEventListener('change', (e) => { if (/^\d{4}-\d{2}$/.test(e.target.value)) { m.ym = e.target.value; rerender(); } });
+    sec.querySelector('.imp-drop').addEventListener('click', () => { draft.months.splice(+sec.dataset.mi, 1); rerender(); });
+
+    sec.querySelectorAll('.ge').forEach((el) => {
+      const gi = +el.dataset.gi, g = m.goals[gi];
+      el.querySelector('.name').addEventListener('input', (e) => { g.name = e.target.value; });
+      el.querySelector('.name').addEventListener('change', rerender);
+      el.querySelector('.imp-type').addEventListener('change', (e) => {
+        g.type = e.target.value;
+        if (g.type === 'number') { g.dir = g.dir || 'atMost'; g.target ??= null; g.unit ??= ''; }
+        Object.values(m.days).forEach((d) => { d.hits.delete(gi); delete d.values[gi]; });
+        rerender();
+      });
+      el.querySelector('.imp-dir')?.addEventListener('change', (e) => { g.dir = e.target.value; });
+      el.querySelector('.target')?.addEventListener('input', (e) => { g.target = e.target.value === '' ? null : Number(e.target.value); e.target.classList.toggle('need', e.target.value === ''); });
+      el.querySelector('.unit')?.addEventListener('input', (e) => { g.unit = e.target.value; });
+      el.querySelector('.imp-gdel').addEventListener('click', () => {
+        if (!confirm(`Remove "${g.name}" from this import?`)) return;
+        m.goals.splice(gi, 1);
+        // Shift goal indexes in the day data
+        Object.values(m.days).forEach((d) => {
+          d.hits = new Set([...d.hits].filter((i) => i !== gi).map((i) => (i > gi ? i - 1 : i)));
+          const v = {}; Object.entries(d.values).forEach(([k, val]) => { k = +k; if (k !== gi) v[k > gi ? k - 1 : k] = val; }); d.values = v;
+        });
+        rerender();
+      });
+    });
+
+    sec.querySelectorAll('.cell').forEach((btn) => btn.addEventListener('click', () => {
+      const d = dayOf(m, +btn.closest('tr').dataset.day), gi = +btn.dataset.gi;
+      if (d.hits.has(gi)) d.hits.delete(gi); else d.hits.add(gi);
+      btn.classList.toggle('on', d.hits.has(gi)); btn.setAttribute('aria-pressed', d.hits.has(gi));
+      updateTotals(sec, m);
+    }));
+    sec.querySelectorAll('.cell-num').forEach((inp) => inp.addEventListener('input', () => {
+      const d = dayOf(m, +inp.closest('tr').dataset.day), gi = +inp.dataset.gi;
+      if (inp.value === '') delete d.values[gi]; else d.values[gi] = Number(inp.value);
+      updateTotals(sec, m);
+    }));
+    sec.querySelectorAll('.imp-note input').forEach((inp) => inp.addEventListener('input', () => { dayOf(m, +inp.dataset.day).note = inp.value; }));
+  });
+
+  document.getElementById('backPaste').addEventListener('click', () => { importDraft = null; renderImportPaste(view); });
+  document.getElementById('cancelImport').addEventListener('click', () => { importDraft = null; go('#goals'); });
+  document.getElementById('saveImport').addEventListener('click', () => {
+    const err = document.getElementById('saveErr');
+    const yms = draft.months.map((m) => m.ym);
+    if (new Set(yms).size !== yms.length) { err.textContent = 'Two of these are set to the same month. Fix the month picker on one of them.'; return; }
+    for (const m of draft.months) {
+      if (m.goals.some((g) => !g.name.trim())) { err.textContent = `A goal in ${monthLabel(m.ym)} has no name.`; return; }
+      const missing = m.goals.find((g) => g.type === 'number' && (g.target === null || Number.isNaN(g.target)));
+      if (missing) { err.textContent = `Set a target for "${missing.name}" in ${monthLabel(m.ym)}: the number that counts as a hit.`; return; }
+    }
+    const overwrite = draft.months.filter((m) => loggedDaysIn(m.ym));
+    if (overwrite.length && !confirm(`This replaces existing data in ${overwrite.map((m) => monthLabel(m.ym)).join(', ')}. Continue?`)) return;
+
+    draft.months.forEach((m) => {
+      // Reuse ids of goals with the same name so trends line up across months
+      const goals = m.goals.map((g) => {
+        const prior = findGoalByName(g.name);
+        const out = { id: prior ? prior.id : uid(), name: g.name.trim(), type: g.type };
+        if (g.type === 'number') Object.assign(out, { dir: g.dir || 'atMost', target: g.target, unit: g.unit || '' });
+        return out;
+      });
+      state.months[m.ym] = { goals };
+      Object.keys(state.days).forEach((d) => { if (d.startsWith(m.ym + '-')) delete state.days[d]; });
+      Object.entries(m.days).forEach(([n, d]) => {
+        if (+n > daysInMonth(m.ym)) return;
+        const hits = {}, values = {};
+        d.hits.forEach((gi) => { hits[goals[gi].id] = true; });
+        Object.entries(d.values).forEach(([gi, v]) => { values[goals[gi].id] = v; });
+        const entry = { note: d.note || '', hits, values };
+        if (isLogged(entry)) state.days[`${m.ym}-${pad(+n)}`] = entry;
+      });
+    });
+    save(true);
+    const first = [...yms].sort()[0];
+    importDraft = null;
+    toast(`Imported ${yms.length} month${yms.length > 1 ? 's' : ''}`);
+    go(`#month/${first}`);
   });
 }
 
