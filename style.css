@@ -235,14 +235,9 @@ ul.recs li b { font-weight: 600; color: var(--accent); }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
-/* Day-change slide (Today tab: arrows + swipe) */
-@keyframes slideFromRight { from { transform: translateX(36px); opacity: 0; } to { transform: none; opacity: 1; } }
-@keyframes slideFromLeft { from { transform: translateX(-36px); opacity: 0; } to { transform: none; opacity: 1; } }
-main.slide-from-right { animation: slideFromRight .22s ease-out; }
-main.slide-from-left { animation: slideFromLeft .22s ease-out; }
-@media (prefers-reduced-motion: reduce) {
-  main.slide-from-right, main.slide-from-left { animation: none; }
-}
+/* Paging (swipe / arrows): keep the sliding page from causing sideways scroll */
+html { overflow-x: hidden; }
+body { overflow-x: clip; }
 
 /* Import from photo */
 ol.steps { padding-left: 22px; margin: 8px 0 0; display: flex; flex-direction: column; gap: 18px; font-size: 16px; line-height: 1.45; }

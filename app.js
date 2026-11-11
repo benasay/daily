@@ -140,6 +140,7 @@ function route() {
   else if (tab === 'import') { document.querySelector('.tabs [data-tab="goals"]').classList.add('active'); renderImport(view); }
   else renderToday(view, arg && arg <= today ? arg : today);
   window.scrollTo(0, 0);
+  animateEnter(view);
 }
 const go = (hash) => { if (location.hash === hash) route(); else location.hash = hash; };
 
@@ -166,12 +167,12 @@ function renderToday(view, date) {
 
   view.innerHTML = `
     <div class="row date-head">
-      <button class="icon-btn" id="prev" aria-label="Previous day">‹</button>
+      <button class="icon-btn" id="prev" data-page="prev" aria-label="Previous day">‹</button>
       <div class="title">
         <h1>${label}</h1>
         <p class="sub">${MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}</p>
       </div>
-      <button class="icon-btn" id="next" aria-label="Next day" ${date >= today ? 'disabled' : ''}>›</button>
+      <button class="icon-btn" id="next" data-page="next" aria-label="Next day" ${date >= today ? 'disabled' : ''}>›</button>
     </div>
 
     ${date === today ? todayBanners(today) : ''}
@@ -246,60 +247,132 @@ function renderToday(view, date) {
     refresh(); save();
   }));
   document.getElementById('note').addEventListener('input', (ev) => { e.note = ev.target.value; save(); updateLogStreak(); });
-  view.querySelectorAll('[data-go]').forEach((el) => el.addEventListener('click', () => { if (el.dataset.slide) slideFrom = el.dataset.slide; go(el.dataset.go); }));
-  document.getElementById('prev').addEventListener('click', () => { slideFrom = 'left'; go(`#today/${addDays(date, -1)}`); });
-  document.getElementById('next').addEventListener('click', () => { slideFrom = 'right'; go(addDays(date, 1) >= today ? '#today' : `#today/${addDays(date, 1)}`); });
-
-  // Slide the new day in from the side it came from (set by the arrows or a swipe)
-  if (slideFrom) {
-    view.classList.remove('slide-from-left', 'slide-from-right');
-    void view.offsetWidth; // restart the animation
-    view.classList.add(`slide-from-${slideFrom}`);
-    slideFrom = null;
-  }
+  view.querySelectorAll('[data-go]').forEach((el) => el.addEventListener('click', () => go(el.dataset.go)));
 }
 
-/* ---------- swipe between days on the Today tab ----------
-   Swipe right = previous day, swipe left = next day. Reuses the arrow buttons,
-   so it behaves exactly like tapping them (including stopping at today). */
-let slideFrom = null;
-(function enableDaySwipe() {
+/* ---------- Paging: swipe or arrows ----------
+   Today: previous/next day. Month, Insights, Goals: previous/next month.
+   The page tracks your finger 1:1; release past ~22% of the width (or flick) to turn the page.
+   The old page slides out, the new one slides in from the other side. Arrows use the same motion. */
+const PAGE_EXIT_MS = 150, PAGE_ENTER_MS = 300, PAGE_EASE = 'cubic-bezier(.22,.8,.24,1)';
+const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+let enterFrom = null, paging = false;
+
+/** Where "previous" and "next" go from the current screen (null = can't go that way). */
+function pageTargets() {
+  const [tab = 'today', arg] = location.hash.replace(/^#\/?/, '').split('/');
+  const today = todayStr();
+  if (tab === 'today') {
+    const date = arg && arg <= today ? arg : today, nd = addDays(date, 1);
+    return { prev: `#today/${addDays(date, -1)}`, next: date >= today ? null : nd >= today ? '#today' : `#today/${nd}` };
+  }
+  if (tab === 'month' || tab === 'insights' || tab === 'goals') {
+    const ym = arg || ymOf(today), n = addMonths(ym, 1);
+    return { prev: `#${tab}/${addMonths(ym, -1)}`, next: n <= ymOf(today) ? `#${tab}/${n}` : null };
+  }
+  return null;
+}
+
+function clearPageStyle(view) {
+  view.style.transition = ''; view.style.transform = ''; view.style.opacity = ''; view.style.willChange = '';
+}
+
+function springBack(view) {
+  view.style.transition = `transform 280ms ${PAGE_EASE}, opacity 200ms ease`;
+  view.style.transform = 'translate3d(0,0,0)'; view.style.opacity = '1';
+  setTimeout(() => { if (!paging) clearPageStyle(view); }, 300);
+}
+
+/** Turn the page: dir = 'prev' | 'next'. Continues from wherever a drag left the page. */
+function pageTo(dir) {
   const view = document.getElementById('view');
-  const onToday = () => !!document.getElementById('note'); // only the Today screen has the note field
-  let startX = 0, startY = 0, dx = 0, tracking = false, horizontal = null;
+  const hash = pageTargets()?.[dir];
+  if (!hash || paging) { springBack(view); return; }
+  if (reduceMotion()) { clearPageStyle(view); go(hash); return; }
+  paging = true;
+  const w = view.offsetWidth || innerWidth;
+  view.style.willChange = 'transform, opacity';
+  view.style.transition = `transform ${PAGE_EXIT_MS}ms cubic-bezier(.4,0,1,1), opacity ${PAGE_EXIT_MS}ms linear`;
+  requestAnimationFrame(() => {
+    view.style.transform = `translate3d(${dir === 'next' ? -w * 0.45 : w * 0.45}px,0,0)`;
+    view.style.opacity = '0';
+  });
+  setTimeout(() => { enterFrom = dir; go(hash); }, PAGE_EXIT_MS);
+}
+
+/** Called after every render: slide the new page in if we just paged. */
+function animateEnter(view) {
+  if (!enterFrom) { if (!paging) clearPageStyle(view); return; }
+  const w = view.offsetWidth || innerWidth;
+  view.style.transition = 'none';
+  view.style.transform = `translate3d(${enterFrom === 'next' ? w * 0.45 : -w * 0.45}px,0,0)`;
+  view.style.opacity = '0';
+  enterFrom = null;
+  void view.offsetWidth; // commit the start position
+  view.style.transition = `transform ${PAGE_ENTER_MS}ms ${PAGE_EASE}, opacity ${PAGE_ENTER_MS * 0.7}ms ease-out`;
+  view.style.transform = 'translate3d(0,0,0)'; view.style.opacity = '1';
+  setTimeout(() => { paging = false; clearPageStyle(view); }, PAGE_ENTER_MS + 20);
+}
+
+// Arrow buttons (and the "fill in yesterday" banner) anywhere in the app
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-page]');
+  if (b && !b.disabled) pageTo(b.dataset.page);
+});
+
+(function enableSwipe() {
+  const view = document.getElementById('view');
+  let active = false, axis = null, sx = 0, sy = 0, dx = 0, samples = [];
+
+  const blocked = (el) => {
+    if (el.closest('textarea, input, select, .story')) return true;
+    const scroller = el.closest('.grid-table'); // let wide tables scroll sideways
+    return !!(scroller && scroller.scrollWidth > scroller.clientWidth + 2);
+  };
+  const rubber = (d) => Math.sign(d) * Math.pow(Math.abs(d), 0.7); // resistance when there's nowhere to go
 
   view.addEventListener('touchstart', (e) => {
-    if (!onToday() || e.touches.length !== 1) return;
-    // Leave text editing alone so selecting/moving the cursor never changes the day
-    if (e.target.closest('textarea, input, select')) return;
-    startX = e.touches[0].clientX; startY = e.touches[0].clientY;
-    dx = 0; tracking = true; horizontal = null;
+    if (paging || e.touches.length !== 1 || !pageTargets() || blocked(e.target)) { active = false; return; }
+    const t = e.touches[0];
+    active = true; axis = null; dx = 0; sx = t.clientX; sy = t.clientY;
+    samples = [{ x: sx, t: e.timeStamp }];
   }, { passive: true });
 
   view.addEventListener('touchmove', (e) => {
-    if (!tracking) return;
-    const mx = e.touches[0].clientX - startX, my = e.touches[0].clientY - startY;
-    if (horizontal === null && (Math.abs(mx) > 8 || Math.abs(my) > 8)) horizontal = Math.abs(mx) > Math.abs(my) * 1.2;
-    if (!horizontal) return;
-    dx = mx;
-    const atToday = document.getElementById('next')?.disabled;
-    const resist = dx < 0 && atToday ? 0.15 : 0.45; // rubber-band when there's no next day
-    view.style.transition = 'none';
-    view.style.transform = `translateX(${dx * resist}px)`;
-    view.style.opacity = String(1 - Math.min(Math.abs(dx) / 900, 0.25));
-  }, { passive: true });
+    if (!active) return;
+    const t = e.touches[0], mx = t.clientX - sx, my = t.clientY - sy;
+    if (axis === null) {
+      if (Math.abs(mx) < 8 && Math.abs(my) < 8) return;
+      axis = Math.abs(mx) > Math.abs(my) ? 'x' : 'y';
+      if (axis === 'y') { active = false; return; } // normal vertical scrolling
+      view.style.transition = 'none'; view.style.willChange = 'transform, opacity';
+    }
+    e.preventDefault(); // horizontal: stop the page from also scrolling vertically
+    const targets = pageTargets();
+    const canGo = mx < 0 ? !!targets.next : !!targets.prev;
+    dx = canGo ? mx : rubber(mx);
+    view.style.transform = `translate3d(${dx}px,0,0)`;
+    view.style.opacity = String(1 - Math.min(Math.abs(dx) / (view.offsetWidth * 2.5), 0.3));
+    samples.push({ x: t.clientX, t: e.timeStamp });
+    if (samples.length > 5) samples.shift();
+  }, { passive: false });
 
   const end = () => {
-    if (!tracking) return;
-    tracking = false;
-    view.style.transition = 'transform .2s ease, opacity .2s ease';
-    view.style.transform = ''; view.style.opacity = '';
-    if (!horizontal || Math.abs(dx) < 60) return;
-    const btn = document.getElementById(dx > 0 ? 'prev' : 'next');
-    if (btn && !btn.disabled) { btn.click(); if (navigator.vibrate) navigator.vibrate(6); }
+    if (!active) return;
+    active = false;
+    if (axis !== 'x') return;
+    const a = samples[0], b = samples[samples.length - 1];
+    const v = (b.x - a.x) / Math.max(1, b.t - a.t); // px per ms
+    const dir = dx < 0 ? 'next' : 'prev';
+    const far = Math.abs(dx) > view.offsetWidth * 0.22;
+    const flick = Math.abs(v) > 0.35 && Math.sign(v) === Math.sign(dx) && Math.abs(dx) > 24;
+    if ((far || flick) && pageTargets()?.[dir]) {
+      if (navigator.vibrate) navigator.vibrate(6);
+      pageTo(dir);
+    } else springBack(view);
   };
   view.addEventListener('touchend', end);
-  view.addEventListener('touchcancel', end);
+  view.addEventListener('touchcancel', () => { if (active && axis === 'x') { active = false; springBack(view); } });
 })();
 
 /* =========================================================
@@ -323,9 +396,9 @@ function monthNav(ym, tab) {
   const canNext = next <= ymOf(todayStr());
   return `
     <div class="row date-head">
-      <button class="icon-btn" onclick="location.hash='#${tab}/${addMonths(ym, -1)}'" aria-label="Previous month">‹</button>
+      <button class="icon-btn" data-page="prev" aria-label="Previous month">‹</button>
       <div class="title"><h1>${monthLabel(ym)}</h1></div>
-      <button class="icon-btn" ${canNext ? `onclick="location.hash='#${tab}/${next}'"` : 'disabled'} aria-label="Next month">›</button>
+      <button class="icon-btn" data-page="next" ${canNext ? '' : 'disabled'} aria-label="Next month">›</button>
     </div>`;
 }
 
@@ -672,7 +745,7 @@ function todayBanners(today) {
   if (firstLogged && firstLogged < y && !isLogged(state.days[y])) {
     let missed = 0;
     for (let i = 1; i <= 7; i++) { const d = addDays(today, -i); if (d >= firstLogged && !isLogged(state.days[d])) missed++; }
-    out.push(`<button class="banner missed" data-go="#today/${y}" data-slide="left">${missed > 1 ? `You missed ${missed} of the last 7 days.` : `You didn't log yesterday.`} <b>Fill in yesterday →</b></button>`);
+    out.push(`<button class="banner missed" data-page="prev">${missed > 1 ? `You missed ${missed} of the last 7 days.` : `You didn't log yesterday.`} <b>Fill in yesterday →</b></button>`);
   }
   return out.join('');
 }
