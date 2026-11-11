@@ -312,7 +312,12 @@ function renderMonth(view, ym) {
 
   view.innerHTML = `
     ${monthNav(ym, 'month')}
-    <h2>Goals hit per day</h2>
+    <div class="row spread chart-head">
+      <h2 id="chartTitle">Goals hit per day</h2>
+      <div class="seg" role="tablist" aria-label="Chart type">
+        ${['line', 'calendar', 'year'].map((v) => `<button role="tab" data-view="${v}" aria-selected="${chartView() === v}">${v[0].toUpperCase() + v.slice(1)}</button>`).join('')}
+      </div>
+    </div>
     <div class="card chart-wrap" id="chart"></div>
 
     <h2>Memorable moments</h2>
@@ -351,8 +356,126 @@ function renderMonth(view, ym) {
     <p class="help">Number goals show the value you entered; bold means it hit the target. Tap any day to edit it.</p>
   `;
 
-  drawLineChart(document.getElementById('chart'), ym, days, goals.length);
-  view.querySelectorAll('[data-date]').forEach((el) => el.addEventListener('click', () => go(`#today/${el.dataset.date}`)));
+  const drawChart = () => {
+    const v = chartView(), host = document.getElementById('chart');
+    view.querySelectorAll('.seg button').forEach((btn) => btn.setAttribute('aria-selected', btn.dataset.view === v));
+    document.getElementById('chartTitle').textContent = v === 'year' ? `${ym.slice(0, 4)} at a glance` : 'Goals hit per day';
+    if (v === 'calendar') drawCalendar(host, ym, days);
+    else if (v === 'year') drawYear(host, ym.slice(0, 4));
+    else drawLineChart(host, ym, days, goals.length);
+  };
+  view.querySelectorAll('.seg button').forEach((btn) => btn.addEventListener('click', () => {
+    localStorage.setItem(CHART_KEY, btn.dataset.view); drawChart();
+  }));
+  drawChart();
+  view.querySelectorAll('tr[data-date], li[data-date]').forEach((el) => el.addEventListener('click', () => go(`#today/${el.dataset.date}`)));
+}
+
+/* ---------- chart helpers ---------- */
+const CHART_KEY = 'tally-chart-view'; // remembers Line / Calendar / Year (display preference only)
+const chartView = () => (['line', 'calendar', 'year'].includes(localStorage.getItem(CHART_KEY)) ? localStorage.getItem(CHART_KEY) : 'line');
+
+/** Share of that month's goals hit on a date (0–1), or null if the day wasn't logged. */
+function dayFraction(date) {
+  const e = state.days[date];
+  if (!isLogged(e)) return null;
+  const total = monthGoals(ymOf(date), false).length;
+  return total ? score(date) / total : 0;
+}
+
+/** Heat level 0–4 used by the calendar and year views (same scale in both). */
+const heatLevel = (frac) => (frac <= 0 ? 0 : Math.min(4, Math.ceil(frac * 4)));
+const heatLegend = () => `
+  <div class="heat-legend" aria-hidden="true">
+    <span>Fewer</span>${[0, 1, 2, 3, 4].map((l) => `<i class="heat-${l}"></i>`).join('')}<span>More</span>
+    <i class="heat-none" style="margin-left:10px"></i><span>Not logged</span>
+  </div>`;
+
+/** Trailing 7-day average of goals hit (logged days only; needs 3+ logged days in the window). */
+function rollingAvg(date) {
+  const vals = [];
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(date, -i);
+    if (isLogged(state.days[d])) vals.push(score(d));
+  }
+  return vals.length >= 3 ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+}
+
+function drawCalendar(host, ym, days) {
+  const first = parseDate(`${ym}-01`).getDay();
+  const today = todayStr();
+  const cells = [];
+  for (let i = 0; i < first; i++) cells.push('<div class="cal-cell blank"></div>');
+  for (let n = 1; n <= daysInMonth(ym); n++) {
+    const date = `${ym}-${pad(n)}`;
+    if (date > today) { cells.push(`<div class="cal-cell future"><span class="cd">${n}</span></div>`); continue; }
+    const frac = dayFraction(date);
+    const s = frac === null ? null : score(date);
+    const lvl = frac === null ? 'none' : heatLevel(frac);
+    const note = state.days[date]?.note || '';
+    cells.push(`<button class="cal-cell heat-${lvl} ${date === today ? 'is-today' : ''}" data-date="${date}"
+      aria-label="${MONTHS[+ym.slice(5) - 1]} ${n}: ${s === null ? 'not logged' : s + ' goals hit'}${note ? '. ' + esc(note) : ''}" title="${esc(note)}">
+      <span class="cd">${n}</span>${s === null ? '' : `<span class="cs">${s}</span>`}</button>`);
+  }
+  host.innerHTML = `
+    <div class="cal">
+      ${WEEKDAYS.map((w) => `<div class="cal-wd">${w[0]}</div>`).join('')}
+      ${cells.join('')}
+    </div>
+    ${heatLegend()}
+    <p class="help" style="margin:6px 0 0">Shade = share of that month's goals hit. Tap a day to open it.</p>`;
+  host.querySelectorAll('button[data-date]').forEach((el) => el.addEventListener('click', () => go(`#today/${el.dataset.date}`)));
+}
+
+function drawYear(host, year) {
+  const today = todayStr();
+  const CELL = 10, GAP = 2, L = 30, T = 16;
+  const W = L + 31 * (CELL + GAP), H = T + 12 * (CELL + GAP);
+  let rects = '', logged = 0, sum = 0, n = 0;
+  for (let m = 1; m <= 12; m++) {
+    const ym = `${year}-${pad(m)}`;
+    for (let d = 1; d <= daysInMonth(ym); d++) {
+      const date = `${ym}-${pad(d)}`;
+      if (date > today) continue;
+      const frac = dayFraction(date);
+      if (frac !== null) { logged++; sum += frac; n++; }
+      const lvl = frac === null ? 'none' : heatLevel(frac);
+      rects += `<rect class="heat-${lvl}" data-date="${date}" x="${L + (d - 1) * (CELL + GAP)}" y="${T + (m - 1) * (CELL + GAP)}" width="${CELL}" height="${CELL}" rx="2"/>`;
+    }
+  }
+  host.innerHTML = `
+    <div class="chart year">
+      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Every day of ${year}, shaded by goals hit">
+        <g class="axis">
+          ${MONTHS.map((mn, i) => `<text x="${L - 6}" y="${T + i * (CELL + GAP) + CELL - 1.5}" text-anchor="end">${mn.slice(0, 3)}</text>`).join('')}
+          ${[1, 10, 20, 31].map((d) => `<text x="${L + (d - 1) * (CELL + GAP) + CELL / 2}" y="${T - 5}" text-anchor="middle">${d}</text>`).join('')}
+        </g>
+        ${rects}
+      </svg>
+    </div>
+    ${heatLegend()}
+    <p class="help" style="margin:6px 0 0">${logged ? `${logged} day${logged > 1 ? 's' : ''} logged in ${year} · ${Math.round((sum / n) * 100)}% of goals hit on average.` : `No days logged in ${year} yet.`} Tap a square for details.</p>`;
+
+  const svg = host.querySelector('svg');
+  const tip = document.createElement('div');
+  tip.className = 'tip'; tip.style.display = 'none';
+  host.querySelector('.chart').appendChild(tip);
+  let selected = null;
+  const show = (rect) => {
+    const date = rect.dataset.date, d = parseDate(date);
+    const frac = dayFraction(date);
+    const note = state.days[date]?.note || '';
+    if (selected) selected.classList.remove('sel');
+    selected = rect; rect.classList.add('sel');
+    tip.innerHTML = `<b>${MONTHS[d.getMonth()].slice(0, 3)} ${d.getDate()} · ${frac === null ? 'not logged' : `${score(date)} / ${monthGoals(ymOf(date), false).length}`}</b>${note ? `<br>${esc(note.length > 70 ? note.slice(0, 70) + '…' : note)}` : ''}`;
+    const r = svg.getBoundingClientRect(), rr = rect.getBoundingClientRect();
+    tip.style.display = '';
+    tip.style.left = `${Math.min(Math.max(rr.left - r.left + rr.width / 2, 110), r.width - 110)}px`;
+    tip.style.top = `${rr.top - r.top}px`;
+  };
+  svg.addEventListener('pointerdown', (e) => { if (e.target.dataset.date) show(e.target); });
+  svg.addEventListener('pointermove', (e) => { if (e.pointerType === 'mouse' && e.target.dataset.date) show(e.target); });
+  svg.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') { tip.style.display = 'none'; selected?.classList.remove('sel'); } });
 }
 
 function drawLineChart(host, ym, days, maxY) {
@@ -370,6 +493,15 @@ function drawLineChart(host, ym, days, maxY) {
     prevDay = d.day;
   });
 
+  // 7-day rolling average (uses the previous month's days too, so day 1 isn't empty)
+  const avgPts = days.map((d) => ({ day: d.day, v: rollingAvg(d.date) })).filter((p) => p.v !== null);
+  let avgPath = '', prevAvg = -10;
+  avgPts.forEach((p) => {
+    avgPath += `${p.day === prevAvg + 1 ? 'L' : 'M'}${x(p.day).toFixed(1)},${y(p.v).toFixed(1)} `;
+    prevAvg = p.day;
+  });
+  const avgByDay = Object.fromEntries(avgPts.map((p) => [p.day, p.v]));
+
   const yTicks = [];
   const step = ymax > 8 ? 2 : 1;
   for (let v = 0; v <= ymax; v += step) yTicks.push(v);
@@ -377,15 +509,20 @@ function drawLineChart(host, ym, days, maxY) {
 
   host.innerHTML = `
     <div class="chart">
-      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Goals hit each day in ${monthLabel(ym)}">
+      <div class="legend" aria-hidden="true">
+        <span><i class="sw daily"></i>Daily</span>
+        <span><i class="sw avg"></i>7-day average</span>
+      </div>
+      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Goals hit each day in ${monthLabel(ym)}, with a 7-day average">
         <g class="grid">${yTicks.map((v) => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>`).join('')}</g>
         <g class="axis">
           ${yTicks.map((v) => `<text x="${L - 8}" y="${y(v) + 3}" text-anchor="end">${v}</text>`).join('')}
           ${xTicks.map((v) => `<text x="${x(v)}" y="${H - 6}" text-anchor="middle">${v}</text>`).join('')}
         </g>
         <line class="cross" id="cross" y1="${T}" y2="${H - B}" style="display:none"/>
-        <path class="series" d="${path}"/>
-        ${logged.map((d) => `<circle class="pt" data-day="${d.day}" cx="${x(d.day)}" cy="${y(d.score)}" r="4"/>`).join('')}
+        <path class="series daily" d="${path}"/>
+        ${logged.map((d) => `<circle class="pt" data-day="${d.day}" cx="${x(d.day)}" cy="${y(d.score)}" r="3.5"/>`).join('')}
+        <path class="series avg" d="${avgPath}"/>
         <rect x="${L}" y="0" width="${W - L - R}" height="${H}" fill="transparent" id="hit"/>
       </svg>
       ${logged.length ? '' : '<div class="empty" style="position:absolute;inset:0;display:grid;place-items:center">No days logged yet</div>'}
@@ -407,7 +544,8 @@ function drawLineChart(host, ym, days, maxY) {
     cross.setAttribute('x1', x(best.day)); cross.setAttribute('x2', x(best.day)); cross.style.display = '';
     host.querySelectorAll('.pt').forEach((p) => p.classList.toggle('sel', +p.dataset.day === best.day));
     const note = best.entry.note ? `<br>${esc(best.entry.note.length > 70 ? best.entry.note.slice(0, 70) + '…' : best.entry.note)}` : '';
-    tip.innerHTML = `<b>${MONTHS[+ym.slice(5) - 1].slice(0, 3)} ${best.day} · ${best.score} / ${maxY}</b>${note}`;
+    const av = avgByDay[best.day];
+    tip.innerHTML = `<b>${MONTHS[+ym.slice(5) - 1].slice(0, 3)} ${best.day} · ${best.score} / ${maxY}</b>${av !== undefined ? ` <span style="opacity:.8">· 7-day avg ${round1(av)}</span>` : ''}${note}`;
     tip.style.display = '';
     const pad = 14;
     tip.style.left = `${Math.min(Math.max(px + pad, 110), r.width - 110 + pad)}px`;

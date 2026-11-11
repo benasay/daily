@@ -269,3 +269,59 @@ table.imp-grid tbody tr { cursor: default; }
 .imp-note { display: flex; align-items: center; gap: 8px; }
 .imp-note .d { width: 22px; text-align: right; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; flex: none; }
 .imp-note input { flex: 1; min-width: 0; font: inherit; font-size: 15px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+
+/* Chart switcher */
+.chart-head { margin: 28px 0 10px; }
+.chart-head h2 { margin: 0; }
+.seg { display: inline-flex; background: var(--track); border-radius: 9px; padding: 2px; }
+.seg button {
+  border: 0; background: none; font-size: 13px; font-weight: 500; color: var(--muted);
+  padding: 6px 10px; border-radius: 7px; cursor: pointer;
+}
+.seg button[aria-selected="true"] { background: var(--card); color: var(--accent); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+
+/* Line chart: daily (light) + 7-day average (bold) */
+.chart .series.daily { stroke: color-mix(in srgb, var(--accent) 40%, var(--card)); stroke-width: 1.5; }
+.chart .series.avg { stroke: var(--accent); stroke-width: 2.5; }
+.chart .pt { fill: color-mix(in srgb, var(--accent) 55%, var(--card)); }
+.chart .pt.sel { fill: var(--accent); }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin: 0 0 6px 2px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { display: inline-block; width: 16px; height: 0; border-top: 2px solid; border-radius: 1px; }
+.legend .sw.daily { border-color: color-mix(in srgb, var(--accent) 40%, var(--card)); border-top-width: 1.5px; }
+.legend .sw.avg { border-color: var(--accent); border-top-width: 3px; }
+
+/* Heat scale shared by Calendar + Year (one hue, light -> dark) */
+.heat-0 { --heat: color-mix(in srgb, var(--accent) 8%, var(--card)); }
+.heat-1 { --heat: color-mix(in srgb, var(--accent) 28%, var(--card)); }
+.heat-2 { --heat: color-mix(in srgb, var(--accent) 50%, var(--card)); }
+.heat-3 { --heat: color-mix(in srgb, var(--accent) 74%, var(--card)); }
+.heat-4 { --heat: var(--accent); }
+.heat-none { --heat: var(--card); }
+.heat-legend { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); margin-top: 12px; flex-wrap: wrap; }
+.heat-legend span { margin: 0 4px; }
+.heat-legend i { width: 14px; height: 14px; border-radius: 3px; background: var(--heat); border: 1px solid var(--line); }
+.heat-legend i.heat-none { border-style: dashed; border-color: var(--muted-2); }
+
+/* Calendar */
+.cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.cal-wd { text-align: center; font-size: 11px; color: var(--muted); padding-bottom: 2px; }
+.cal-cell {
+  aspect-ratio: 1; border-radius: 8px; border: 1px solid transparent; background: var(--heat, transparent);
+  position: relative; padding: 0; font: inherit; color: var(--ink); cursor: pointer;
+}
+.cal-cell.blank, .cal-cell.future { cursor: default; background: none; }
+.cal-cell.future .cd { color: var(--line); }
+.cal-cell.heat-none { border: 1px dashed var(--line); }
+.cal-cell.heat-0 { border-color: var(--line); }
+.cal-cell .cd { position: absolute; top: 4px; left: 6px; font-size: 11px; color: var(--muted); }
+.cal-cell .cs { position: absolute; bottom: 3px; right: 6px; font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.cal-cell.heat-3 .cd, .cal-cell.heat-3 .cs, .cal-cell.heat-4 .cd, .cal-cell.heat-4 .cs { color: var(--accent-ink); }
+.cal-cell.is-today { outline: 2px solid var(--ink); outline-offset: 1px; }
+
+/* Year */
+.chart.year rect { fill: var(--heat); stroke: var(--line); stroke-width: .6; cursor: pointer; }
+.chart.year rect.heat-none { stroke-dasharray: 1.5 1; }
+.chart.year rect.heat-3, .chart.year rect.heat-4 { stroke: none; }
+.chart.year rect.sel { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: none; }
+.chart.year { position: relative; }
