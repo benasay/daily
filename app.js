@@ -937,10 +937,7 @@ function renderInsights(view, ym) {
       <div class="stat"><div class="k">Best day</div><div class="v">${a.best.score}<span class="sub" style="font-size:13px"> · ${MONTHS[+ym.slice(5) - 1].slice(0, 3)} ${a.best.day}</span></div></div>
     </div>
 
-    <button class="banner review" data-go="#review/${ym}" style="margin-top:12px">${state.months[ym]?.reviewedAt ? 'Reviewed ✓ ' : ''}<b>${state.months[ym]?.reviewedAt ? 'Open' : 'Start'} the ${MONTHS[+ym.slice(5) - 1]} review →</b></button>
-
-    <h2>Recommendations</h2>
-    <ul class="recs">${a.recs.map((r) => `<li>${r}</li>`).join('') || '<li>Nothing stands out yet. Steady month.</li>'}</ul>
+    <button class="banner review" data-go="#review/${ym}" style="margin-top:12px">${state.months[ym]?.reviewedAt ? 'Reviewed ✓ ' : ''}<b>${state.months[ym]?.reviewedAt ? 'Open' : 'Start'} the ${MONTHS[+ym.slice(5) - 1]} review →</b><span class="banner-sub">Recap, recommendations, and next month's goals</span></button>
 
     <h2>Goal trends</h2>
     ${trendsHTML(ym)}

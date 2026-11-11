@@ -385,3 +385,5 @@ table.imp-grid tbody tr { cursor: default; }
 .tag.warn { background: #FFF1DD; color: #7A4B00; }
 @media (prefers-color-scheme: dark) { .tag.warn { background: #3A3020; color: #F2D9A0; } }
 .add-input { flex: 1; min-width: 0; font: inherit; font-size: 16px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+
+.banner-sub { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
