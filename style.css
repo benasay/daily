@@ -325,3 +325,13 @@ table.imp-grid tbody tr { cursor: default; }
 .chart.year rect.heat-3, .chart.year rect.heat-4 { stroke: none; }
 .chart.year rect.sel { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: none; }
 .chart.year { position: relative; }
+
+/* Sync card */
+.sync-card input { width: 100%; font: inherit; font-size: 16px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); margin-bottom: 8px; }
+.sync-card .sync-err { color: var(--danger); margin: 2px 0 0; min-height: 0; }
+.sync-card .sync-err:empty { display: none; }
+.sync-status { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 500; }
+.sync-status .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--muted-2); }
+.sync-status .dot.ok { background: var(--accent); }
+.sync-status .dot.busy { background: #C98A1B; }
+.sync-status .dot.err { background: var(--danger); }

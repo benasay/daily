@@ -63,6 +63,7 @@ function save(immediate) {
     localStorage.setItem(KEY, JSON.stringify(state));
     const el = document.querySelector('.saved');
     if (el) el.textContent = 'Saved';
+    if (window.onTallySaved) window.onTallySaved(); // cloud sync (sync.js)
   };
   if (immediate) write(); else saveTimer = setTimeout(write, 300);
 }
@@ -750,6 +751,8 @@ function renderGoals(view, ym) {
     ${monthNav(ym, 'goals')}
     <p class="sub" style="text-align:center;margin-top:-6px">Goals for this month. Changes apply to every day in ${MONTHS[+ym.slice(5) - 1]}.</p>
 
+    <div id="syncCard"></div>
+
     <h2>Goals</h2>
     <div class="goal-edit">
       ${goals.map((g, i) => `
@@ -795,6 +798,7 @@ function renderGoals(view, ym) {
     </div>
   `;
 
+  if (window.renderSyncCard) window.renderSyncCard(document.getElementById('syncCard'));
   const rerender = () => { save(true); renderGoals(view, ym); };
   view.querySelectorAll('.ge').forEach((el) => {
     const g = goals[+el.dataset.i];
