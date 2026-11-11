@@ -131,7 +131,12 @@ function route() {
   if (tab === 'month') renderMonth(view, arg || ymOf(today));
   else if (tab === 'insights') renderInsights(view, arg || ymOf(today));
   else if (tab === 'goals') renderGoals(view, arg || ymOf(today));
-  else if (tab === 'review') { document.querySelector('.tabs [data-tab="insights"]').classList.add('active'); renderReview(view, arg || addMonths(ymOf(today), -1), +arg2 || 1, arg3); }
+  else if (tab === 'review') {
+    const rym = arg || addMonths(ymOf(today), -1);
+    if (!monthIsOver(rym)) { location.replace(`#insights/${rym}`); toast(`Your ${MONTHS[+rym.slice(5) - 1]} recap unlocks ${unlockLabel(rym)}`); return; }
+    document.querySelector('.tabs [data-tab="insights"]').classList.add('active');
+    renderReview(view, rym, +arg2 || 1, arg3);
+  }
   else if (tab === 'import') { document.querySelector('.tabs [data-tab="goals"]').classList.add('active'); renderImport(view); }
   else renderToday(view, arg && arg <= today ? arg : today);
   window.scrollTo(0, 0);
@@ -646,13 +651,21 @@ function trendsHTML(ym) {
 }
 
 /** Banners at the top of Today: missed days + monthly review prompt. */
+/** Recaps unlock only after a month has ended. */
+const monthIsOver = (ym) => ym < ymOf(todayStr());
+const unlockLabel = (ym) => { const n = addMonths(ym, 1); return `${MONTHS[+n.slice(5) - 1]} 1`; };
+const daysLeftLabel = (ym) => {
+  const left = daysInMonth(ym) - +todayStr().slice(8);
+  return left <= 0 ? 'Last day of the month.' : `${left} day${left > 1 ? 's' : ''} to go.`;
+};
+
 function todayBanners(today) {
   const out = [];
   const ym = ymOf(today), prev = addMonths(ym, -1), dayN = +today.slice(8);
   if (state.months[prev] && !state.months[prev].reviewedAt && loggedDaysIn(prev) && dayN <= 14) {
     out.push(`<button class="banner review" data-go="#review/${prev}">${MONTHS[+prev.slice(5) - 1]} is done. <b>Review your month and set up ${MONTHS[+ym.slice(5) - 1]} →</b></button>`);
-  } else if (dayN === daysInMonth(ym) && !state.months[ym]?.reviewedAt) {
-    out.push(`<button class="banner review" data-go="#review/${ym}">Last day of ${MONTHS[+ym.slice(5) - 1]}. <b>Review your month tonight →</b></button>`);
+  } else if (dayN === daysInMonth(ym) && loggedDaysIn(ym)) {
+    out.push(`<div class="banner locked">Last day of ${MONTHS[+ym.slice(5) - 1]}. Your recap unlocks tomorrow.</div>`);
   }
   const y = addDays(today, -1);
   const firstLogged = Object.keys(state.days).filter((d) => isLogged(state.days[d])).sort()[0];
@@ -1095,7 +1108,9 @@ function renderInsights(view, ym) {
       <div class="stat"><div class="k">Best day</div><div class="v">${a.best.score}<span class="sub" style="font-size:13px"> · ${MONTHS[+ym.slice(5) - 1].slice(0, 3)} ${a.best.day}</span></div></div>
     </div>
 
-    <button class="banner review" data-go="#review/${ym}" style="margin-top:12px">${state.months[ym]?.reviewedAt ? 'Reviewed ✓ ' : ''}<b>${state.months[ym]?.reviewedAt ? 'Open' : 'Start'} the ${MONTHS[+ym.slice(5) - 1]} review →</b><span class="banner-sub">Recap, recommendations, and next month's goals</span></button>
+    ${monthIsOver(ym)
+      ? `<button class="banner review" data-go="#review/${ym}" style="margin-top:12px">${state.months[ym]?.reviewedAt ? 'Reviewed ✓ ' : ''}<b>${state.months[ym]?.reviewedAt ? 'Open' : 'Start'} the ${MONTHS[+ym.slice(5) - 1]} review →</b><span class="banner-sub">Recap, recommendations, and next month's goals</span></button>`
+      : `<div class="banner locked" style="margin-top:12px"><b>Your ${MONTHS[+ym.slice(5) - 1]} recap unlocks ${unlockLabel(ym)}</b><span class="banner-sub">${daysLeftLabel(ym)} Keep logging.</span></div>`}
 
     <h2>Goal trends</h2>
     ${trendsHTML(ym)}
