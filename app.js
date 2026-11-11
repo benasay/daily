@@ -122,13 +122,14 @@ function toast(msg) {
 
 /* ---------- routing ---------- */
 function route() {
-  const [tab = 'today', arg] = location.hash.replace(/^#\/?/, '').split('/');
+  const [tab = 'today', arg, arg2] = location.hash.replace(/^#\/?/, '').split('/');
   document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   const view = document.getElementById('view');
   const today = todayStr();
   if (tab === 'month') renderMonth(view, arg || ymOf(today));
   else if (tab === 'insights') renderInsights(view, arg || ymOf(today));
   else if (tab === 'goals') renderGoals(view, arg || ymOf(today));
+  else if (tab === 'review') { document.querySelector('.tabs [data-tab="insights"]').classList.add('active'); renderReview(view, arg || addMonths(ymOf(today), -1), +arg2 || 1); }
   else if (tab === 'import') { document.querySelector('.tabs [data-tab="goals"]').classList.add('active'); renderImport(view); }
   else renderToday(view, arg && arg <= today ? arg : today);
   window.scrollTo(0, 0);
@@ -166,8 +167,11 @@ function renderToday(view, date) {
       <button class="icon-btn" id="next" aria-label="Next day" ${date >= today ? 'disabled' : ''}>›</button>
     </div>
 
+    ${date === today ? todayBanners(today) : ''}
+
     <div class="score" aria-live="polite"><span class="n" id="score">0</span><span class="of">/ ${goals.length}</span></div>
     <div class="pips" id="pips">${goals.map(() => '<span class="pip"></span>').join('')}</div>
+    <div class="streak-pill-wrap"><span class="streak-pill" id="logStreak" hidden></span></div>
 
     <label class="sr-only" for="note">One sentence for the day</label>
     <textarea class="note" id="note" maxlength="240" placeholder="One sentence for the day…">${esc(entry.note)}</textarea>
@@ -178,13 +182,13 @@ function renderToday(view, date) {
       ${goals.map((g) => g.type === 'number' ? `
         <label class="goal" data-id="${g.id}">
           <span class="box"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg></span>
-          <span class="name">${esc(g.name)}<br><span class="meta">Goal ${esc(targetText(g))}</span></span>
+          <span class="name">${esc(g.name)}<br><span class="meta">Goal ${esc(targetText(g))}<span class="gstreak"></span></span></span>
           <input class="num" type="number" inputmode="decimal" step="any" placeholder="${esc(g.unit || '—')}"
                  value="${esc(entry.values?.[g.id] ?? '')}" aria-label="${esc(g.name)} value">
         </label>` : `
         <button class="goal" data-id="${g.id}" aria-pressed="false">
           <span class="box"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg></span>
-          <span class="name">${esc(g.name)}</span>
+          <span class="name">${esc(g.name)}<span class="meta gstreak-line"><span class="gstreak"></span></span></span>
         </button>`).join('')}
     </div>
     <div class="saved"></div>
@@ -201,14 +205,26 @@ function renderToday(view, date) {
       const on = isHit(g, e);
       if (on) n++;
       el.classList.toggle('on', on);
-            if (el.tagName === 'BUTTON') el.setAttribute('aria-pressed', on);
+      if (el.tagName === 'BUTTON') el.setAttribute('aria-pressed', on);
+      // Per-goal streak (counts today once it's hit; otherwise shows the streak you can extend)
+      const st = goalStreak(g.id, date);
+      el.querySelector('.gstreak').textContent = st >= 2 ? `${g.type === 'number' ? ' · ' : ''}${st}-day streak${on ? '' : ', keep it going'}` : '';
+      el.querySelector('.gstreak-line')?.classList.toggle('show', st >= 2);
     });
+    updateLogStreak();
     const s = document.getElementById('score');
     s.textContent = n;
     if (last !== -1 && n !== last) { s.classList.add('bump'); setTimeout(() => s.classList.remove('bump'), 180); }
     if (last !== -1 && n > last && n === goals.length && goals.length) toast('Perfect day: every goal hit');
     last = n;
     view.querySelectorAll('.pip').forEach((p, i) => p.classList.toggle('on', i < n));
+  };
+  const updateLogStreak = () => {
+    const pill = document.getElementById('logStreak');
+    if (!pill) return;
+    const n = logStreak(date);
+    pill.hidden = n < 2;
+    pill.textContent = `${n} ${date === today ? 'nights' : 'days'} logged in a row`;
   };
   refresh();
 
@@ -222,7 +238,8 @@ function renderToday(view, date) {
     if (inp.value === '') delete e.values[id]; else e.values[id] = Number(inp.value);
     refresh(); save();
   }));
-  document.getElementById('note').addEventListener('input', (ev) => { e.note = ev.target.value; save(); });
+  document.getElementById('note').addEventListener('input', (ev) => { e.note = ev.target.value; save(); updateLogStreak(); });
+  view.querySelectorAll('[data-go]').forEach((el) => el.addEventListener('click', () => { if (el.dataset.slide) slideFrom = el.dataset.slide; go(el.dataset.go); }));
   document.getElementById('prev').addEventListener('click', () => { slideFrom = 'left'; go(`#today/${addDays(date, -1)}`); });
   document.getElementById('next').addEventListener('click', () => { slideFrom = 'right'; go(addDays(date, 1) >= today ? '#today' : `#today/${addDays(date, 1)}`); });
 
@@ -558,6 +575,250 @@ function drawLineChart(host, ym, days, maxY) {
   svg.addEventListener('pointerleave', hide);
 }
 
+
+/* =========================================================
+   STREAKS, TRENDS, BANNERS
+   ========================================================= */
+const goalDefOn = (date, goalId) => (state.months[ymOf(date)]?.goals || []).find((g) => g.id === goalId);
+const hitOn = (date, goalId) => { const g = goalDefOn(date, goalId), e = state.days[date]; return !!(g && e && isHit(g, e)); };
+
+/** Consecutive days hitting a goal ending on `date` (or the day before, if `date` isn't hit yet). Spans months. */
+function goalStreak(goalId, date) {
+  let d = hitOn(date, goalId) ? date : addDays(date, -1), n = 0;
+  while (n < 3660 && hitOn(d, goalId)) { n++; d = addDays(d, -1); }
+  return n;
+}
+
+/** Consecutive logged days ending on `date` (or the day before, if `date` isn't logged yet). */
+function logStreak(date) {
+  let d = isLogged(state.days[date]) ? date : addDays(date, -1), n = 0;
+  while (n < 3660 && isLogged(state.days[d])) { n++; d = addDays(d, -1); }
+  return n;
+}
+
+/** Longest run of logged days inside a month. */
+function bestLogStreakIn(ym) {
+  let best = 0, cur = 0;
+  monthDays(ym).forEach((d) => { cur = d.logged ? cur + 1 : 0; best = Math.max(best, cur); });
+  return best;
+}
+
+/** One goal's hit rate in one month (matched by goal id), or null if it wasn't tracked / nothing logged. */
+function goalMonthRate(ym, goalId) {
+  const g = (state.months[ym]?.goals || []).find((x) => x.id === goalId);
+  if (!g) return null;
+  const logged = monthDays(ym).filter((d) => d.logged);
+  if (!logged.length) return null;
+  const hits = logged.filter((d) => isHit(g, d.entry)).length;
+  return { rate: hits / logged.length, hits, n: logged.length };
+}
+
+/** Trend rows for the goals of `ym`: hit rate over the last `span` months. */
+function goalTrends(ym, span = 6) {
+  const months = Array.from({ length: span }, (_, i) => addMonths(ym, i - span + 1));
+  return monthGoals(ym, false).map((g) => {
+    const pts = months.map((m) => ({ ym: m, r: goalMonthRate(m, g.id) }));
+    const cur = pts[pts.length - 1].r, prev = [...pts.slice(0, -1)].reverse().find((p) => p.r);
+    return { g, pts, cur, delta: cur && prev ? cur.rate - prev.r.rate : null, months: pts.filter((p) => p.r).length };
+  });
+}
+
+function trendsHTML(ym) {
+  const rows = goalTrends(ym).filter((t) => t.cur);
+  if (!rows.some((t) => t.months >= 2)) {
+    return '<p class="help">Trends appear once a goal has been tracked for two or more months. Import past months from the Goals tab to fill this in.</p>';
+  }
+  return `<div class="card trends">
+    ${rows.map((t) => `
+      <div class="trend-row">
+        <div class="trend-name">${esc(t.g.name)}</div>
+        <div class="trend-bars" aria-label="${esc(t.g.name)} hit rate by month">
+          ${t.pts.map((p) => `<div class="tb" title="${monthLabel(p.ym)}: ${p.r ? pct(p.r.rate) : 'not tracked'}">
+            <div class="tb-fill ${p.ym === ym ? 'cur' : ''}" style="height:${p.r ? Math.max(4, p.r.rate * 100) : 0}%"></div>
+            <span>${MONTHS[+p.ym.slice(5) - 1][0]}</span></div>`).join('')}
+        </div>
+        <div class="trend-val"><b>${pct(t.cur.rate)}</b>${t.delta === null ? '<span class="d">new</span>' : `<span class="d ${t.delta >= 0.05 ? 'up' : t.delta <= -0.05 ? 'down' : ''}">${t.delta >= 0 ? '▲' : '▼'} ${Math.abs(Math.round(t.delta * 100))}</span>`}</div>
+      </div>`).join('')}
+  </div>
+  <p class="help" style="margin-top:6px">Hit rate per month (share of logged days). ▲▼ = change in points vs the previous month tracked.</p>`;
+}
+
+/** Banners at the top of Today: missed days + monthly review prompt. */
+function todayBanners(today) {
+  const out = [];
+  const ym = ymOf(today), prev = addMonths(ym, -1), dayN = +today.slice(8);
+  if (state.months[prev] && !state.months[prev].reviewedAt && loggedDaysIn(prev) && dayN <= 14) {
+    out.push(`<button class="banner review" data-go="#review/${prev}">${MONTHS[+prev.slice(5) - 1]} is done. <b>Review your month and set up ${MONTHS[+ym.slice(5) - 1]} →</b></button>`);
+  } else if (dayN === daysInMonth(ym) && !state.months[ym]?.reviewedAt) {
+    out.push(`<button class="banner review" data-go="#review/${ym}">Last day of ${MONTHS[+ym.slice(5) - 1]}. <b>Review your month tonight →</b></button>`);
+  }
+  const y = addDays(today, -1);
+  const firstLogged = Object.keys(state.days).filter((d) => isLogged(state.days[d])).sort()[0];
+  if (firstLogged && firstLogged < y && !isLogged(state.days[y])) {
+    let missed = 0;
+    for (let i = 1; i <= 7; i++) { const d = addDays(today, -i); if (d >= firstLogged && !isLogged(state.days[d])) missed++; }
+    out.push(`<button class="banner missed" data-go="#today/${y}" data-slide="left">${missed > 1 ? `You missed ${missed} of the last 7 days.` : `You didn't log yesterday.`} <b>Fill in yesterday →</b></button>`);
+  }
+  return out.join('');
+}
+
+/* =========================================================
+   MONTHLY REVIEW & RESET  (#review/YYYY-MM/step)
+   1 Recap · 2 What the data says · 3 Set up next month
+   ========================================================= */
+let reviewDraft = null; // { ym, next, goals: [{...goal, keep, isNew}] }
+
+function goalSuggestion(p, a) {
+  if (!p) return { tag: 'New', tone: '', text: '' };
+  const ks = a.keystones[0];
+  if (p.g.type === 'number' && p.rate < 0.35 && p.valueAvg !== null) {
+    const t = round1((p.valueAvg + p.g.target) / 2);
+    return { tag: `Struggling · ${pct(p.rate)}`, tone: 'warn', text: `You averaged ${round1(p.valueAvg)}${p.g.unit || ''}. Try a stepping-stone target of ${t}${p.g.unit || ''}.`, target: t };
+  }
+  if (p.rate < 0.35) return { tag: `Struggling · ${pct(p.rate)}`, tone: 'warn', text: 'Make it smaller or more specific, or drop it if it no longer matters.' };
+  if (p.rate >= 0.9) return { tag: `Automatic · ${pct(p.rate)}`, tone: 'good', text: 'Retire it to make room for something new, or raise the bar.' };
+  if (ks && ks.g.id === p.g.id && ks.diff >= 1) return { tag: `Keystone · ${pct(p.rate)}`, tone: 'good', text: `On days you hit it, you hit ${round1(ks.diff)} more other goals. Keep it.` };
+  return { tag: `On track · ${pct(p.rate)}`, tone: '', text: '' };
+}
+
+function renderReview(view, ym, step) {
+  const a = analyze(ym);
+  const next = addMonths(ym, 1);
+  const mName = MONTHS[+ym.slice(5) - 1], nName = MONTHS[+next.slice(5) - 1];
+  const steps = ['Recap', 'What the data says', `Set up ${nName}`];
+  const nav = (n) => `#review/${ym}/${n}`;
+
+  const head = `
+    <div class="row date-head">
+      <button class="icon-btn" data-go="#insights/${ym}" aria-label="Close review">✕</button>
+      <div class="title"><h1>${mName} review</h1><p class="sub">Step ${step} of 3 · ${steps[step - 1]}</p></div>
+      <span style="width:40px"></span>
+    </div>
+    <div class="steps-bar">${steps.map((_, i) => `<span class="${i < step ? 'on' : ''}"></span>`).join('')}</div>`;
+
+  if (!a.N) {
+    view.innerHTML = `${head}<div class="empty">No days logged in ${monthLabel(ym)}.</div>`;
+    bindGo(view); return;
+  }
+
+  let body = '';
+  if (step === 1) {
+    const perfect = a.logged.filter((d) => d.score === a.goals.length && a.goals.length).length;
+    const top = [...a.perGoal].sort((x, y) => y.rate - x.rate).slice(0, 3);
+    const best = [...a.logged].sort((x, y) => y.score - x.score || y.day - x.day).filter((d) => d.entry.note).slice(0, 3);
+    const improved = goalTrends(ym).filter((t) => t.delta !== null && t.delta >= 0.1).sort((x, y) => y.delta - x.delta).slice(0, 3);
+    body = `
+      <div class="stats">
+        <div class="stat"><div class="k">Days logged</div><div class="v">${a.N}<span class="sub" style="font-size:13px;display:inline"> / ${a.days.length}</span></div></div>
+        <div class="stat"><div class="k">Avg / day</div><div class="v">${round1(a.avg)}</div></div>
+        <div class="stat"><div class="k">Perfect days</div><div class="v">${perfect}</div></div>
+      </div>
+      <h2>Your month</h2>
+      <div class="card chart-wrap" id="reviewChart"></div>
+      <h2>Best days</h2>
+      <ol class="moments">${best.map((d) => `<li><span class="d">${d.day}</span><span class="t">${esc(d.entry.note)}</span><span class="c">${d.score}/${a.goals.length}</span></li>`).join('') || '<li><span class="t">No notes this month.</span></li>'}</ol>
+      <h2>Wins</h2>
+      <ul class="recs">
+        ${top.map((p) => `<li><b>${esc(p.g.name)}</b> hit ${p.hits} of ${a.N} days (${pct(p.rate)})${p.bestStreak >= 3 ? `, with a best streak of ${p.bestStreak} days` : ''}.</li>`).join('')}
+        ${improved.map((t) => `<li><b>${esc(t.g.name)}</b> improved ${Math.round(t.delta * 100)} points over the previous month.</li>`).join('')}
+        <li>Longest logging streak: <b>${bestLogStreakIn(ym)} days</b> in a row.</li>
+      </ul>`;
+  } else if (step === 2) {
+    body = `
+      <h2>Recommendations</h2>
+      <ul class="recs">${a.recs.map((r) => `<li>${r}</li>`).join('') || '<li>Nothing stands out. A steady month.</li>'}</ul>
+      <h2>Goal trends</h2>
+      ${trendsHTML(ym)}
+      <h2>Want a second opinion?</h2>
+      <p class="help">Copy this month's data and paste it into Claude for a written review.</p>
+      <div class="actions"><button class="btn" id="copyAI">Copy month for AI review</button></div>`;
+  } else {
+    if (!reviewDraft || reviewDraft.ym !== ym) {
+      const base = (state.months[next]?.goals?.length ? state.months[next].goals : a.goals);
+      reviewDraft = { ym, next, goals: base.map((g) => ({ ...g, keep: true })) };
+    }
+    const nextLogged = loggedDaysIn(next);
+    body = `
+      <p class="help" style="margin-top:4px">Keep, drop or adjust each goal for ${monthLabel(next)}. Suggestions come from ${mName}'s data.${nextLogged ? ` You've already logged ${nextLogged} day${nextLogged > 1 ? 's' : ''} in ${nName}; their check marks stay.` : ''}</p>
+      <div class="goal-edit">
+        ${reviewDraft.goals.map((g, i) => {
+          const sug = g.isNew ? { tag: 'New', tone: 'good', text: '' } : goalSuggestion(a.perGoal.find((p) => p.g.id === g.id), a);
+          return `
+          <div class="ge rv ${g.keep ? '' : 'dropped'}" data-i="${i}">
+            <div class="row">
+              <input class="name" value="${esc(g.name)}" aria-label="Goal name" placeholder="Goal name" ${g.keep ? '' : 'disabled'}>
+              <button class="btn small keep-toggle" aria-pressed="${g.keep}">${g.keep ? 'Keep' : 'Dropped'}</button>
+            </div>
+            <div class="sug"><span class="tag ${sug.tone}">${esc(sug.tag)}</span>${sug.text ? ` ${esc(sug.text)}` : ''}</div>
+            ${g.type === 'number' && g.keep ? `
+              <div class="num-opts">
+                <select class="dir" aria-label="Direction">
+                  <option value="atMost" ${g.dir !== 'atLeast' ? 'selected' : ''}>at most</option>
+                  <option value="atLeast" ${g.dir === 'atLeast' ? 'selected' : ''}>at least</option>
+                </select>
+                <input class="target" type="number" inputmode="decimal" step="any" value="${esc(g.target)}" aria-label="Target">
+                <span>${esc(g.unit || '')}</span>
+                ${sug.target !== undefined && sug.target !== g.target ? `<button class="btn small use-target" data-t="${sug.target}">Use ${sug.target}</button>` : ''}
+              </div>` : ''}
+          </div>`;
+        }).join('')}
+      </div>
+      <form class="row" id="addGoal" style="margin-top:10px">
+        <input id="newGoal" class="add-input" placeholder="Add a new goal…" aria-label="New goal name">
+        <button class="btn" type="submit">Add</button>
+      </form>`;
+  }
+
+  view.innerHTML = `${head}${body}
+    <div class="review-nav">
+      ${step > 1 ? `<button class="btn" data-go="${nav(step - 1)}">Back</button>` : '<span></span>'}
+      ${step < 3 ? `<button class="btn primary" data-go="${nav(step + 1)}">Next</button>`
+                 : `<button class="btn primary" id="finishReview">Start ${nName}</button>`}
+    </div>`;
+  bindGo(view);
+
+  if (step === 1) drawLineChart(document.getElementById('reviewChart'), ym, a.days, a.goals.length);
+  if (step === 2) document.getElementById('copyAI').addEventListener('click', async () => {
+    const text = aiPrompt(ym, a);
+    try { await navigator.clipboard.writeText(text); toast('Copied. Paste it into Claude'); } catch { prompt('Copy this:', text); }
+  });
+  if (step === 3) {
+    const redraw = () => { const y = window.scrollY; renderReview(view, ym, 3); window.scrollTo(0, y); };
+    view.querySelectorAll('.ge.rv').forEach((el) => {
+      const g = reviewDraft.goals[+el.dataset.i];
+      el.querySelector('.name').addEventListener('input', (e) => { g.name = e.target.value; });
+      el.querySelector('.keep-toggle').addEventListener('click', () => {
+        if (g.isNew) reviewDraft.goals.splice(+el.dataset.i, 1); else g.keep = !g.keep;
+        redraw();
+      });
+      el.querySelector('.dir')?.addEventListener('change', (e) => { g.dir = e.target.value; });
+      el.querySelector('.target')?.addEventListener('input', (e) => { g.target = Number(e.target.value); });
+      el.querySelector('.use-target')?.addEventListener('click', (e) => { g.target = Number(e.target.dataset.t); redraw(); });
+    });
+    document.getElementById('addGoal').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const name = document.getElementById('newGoal').value.trim();
+      if (!name) return;
+      reviewDraft.goals.push({ id: uid(), name, type: 'check', keep: true, isNew: true });
+      redraw();
+    });
+    document.getElementById('finishReview').addEventListener('click', () => {
+      const kept = reviewDraft.goals.filter((g) => g.keep && g.name.trim());
+      if (!kept.length) { toast('Keep at least one goal'); return; }
+      state.months[next] = { ...(state.months[next] || {}), goals: kept.map(({ keep, isNew, ...g }) => ({ ...g, name: g.name.trim() })) };
+      state.months[ym].reviewedAt = new Date().toISOString();
+      save(true);
+      reviewDraft = null;
+      toast(`${nName} is set. ${kept.length} goals`);
+      go(next <= ymOf(todayStr()) ? '#today' : `#goals/${next}`);
+    });
+  }
+}
+
+function bindGo(view) {
+  view.querySelectorAll('[data-go]').forEach((el) => el.addEventListener('click', () => go(el.dataset.go)));
+}
+
 /* =========================================================
    INSIGHTS — computed on-device from the month's data
    ========================================================= */
@@ -649,7 +910,8 @@ function analyze(ym) {
   const wds = res.weekday.filter((w) => w.n >= 2);
   if (wds.length >= 4) {
     const lo = wds.reduce((a, w) => (w.avg < a.avg ? w : a)), hi = wds.reduce((a, w) => (w.avg > a.avg ? w : a));
-    if (hi.avg - lo.avg >= 1.5) recs.push(`<b>${lo.name}s</b> are your weakest day (${round1(lo.avg)} goals vs ${round1(hi.avg)} on ${hi.name}s). Plan something specific for them.`);
+    const full = (w) => ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays'][WEEKDAYS.indexOf(w.name)];
+    if (hi.avg - lo.avg >= 1.5) recs.push(`<b>${full(lo)}</b> are your weakest day (${round1(lo.avg)} goals vs ${round1(hi.avg)} on ${full(hi)}). Plan something specific for them.`);
   }
   if (res.trend && Math.abs(res.trend.b - res.trend.a) >= 1) {
     recs.push(res.trend.b > res.trend.a
@@ -675,14 +937,19 @@ function renderInsights(view, ym) {
       <div class="stat"><div class="k">Best day</div><div class="v">${a.best.score}<span class="sub" style="font-size:13px"> · ${MONTHS[+ym.slice(5) - 1].slice(0, 3)} ${a.best.day}</span></div></div>
     </div>
 
+    <button class="banner review" data-go="#review/${ym}" style="margin-top:12px">${state.months[ym]?.reviewedAt ? 'Reviewed ✓ ' : ''}<b>${state.months[ym]?.reviewedAt ? 'Open' : 'Start'} the ${MONTHS[+ym.slice(5) - 1]} review →</b></button>
+
     <h2>Recommendations</h2>
     <ul class="recs">${a.recs.map((r) => `<li>${r}</li>`).join('') || '<li>Nothing stands out yet. Steady month.</li>'}</ul>
+
+    <h2>Goal trends</h2>
+    ${trendsHTML(ym)}
 
     <h2>Hit rate by goal</h2>
     <div class="card bars">
       ${[...a.perGoal].sort((x, y) => y.rate - x.rate).map((p) => `
         <div class="bar-row" title="Best streak: ${p.bestStreak} days">
-          <div class="lbl"><span>${esc(p.g.name)}${p.g.type === 'number' && p.valueAvg !== null ? ` <span class="sub" style="display:inline">· avg ${round1(p.valueAvg)}${esc(p.g.unit || '')}</span>` : ''}</span><span>${p.hits}/${a.N}</span></div>
+          <div class="lbl"><span>${esc(p.g.name)}${p.g.type === 'number' && p.valueAvg !== null ? ` <span class="sub" style="display:inline">· avg ${round1(p.valueAvg)}${esc(p.g.unit || '')}</span>` : ''}${p.bestStreak >= 3 ? ` <span class="sub" style="display:inline">· best streak ${p.bestStreak}</span>` : ''}</span><span>${p.hits}/${a.N}</span></div>
           <div class="bar-track"><div class="bar-fill" style="width:${p.rate * 100}%"></div></div>
         </div>`).join('')}
     </div>
@@ -719,6 +986,7 @@ function renderInsights(view, ym) {
     try { await navigator.clipboard.writeText(text); toast('Copied. Paste it into Claude'); }
     catch { prompt('Copy this:', text); }
   });
+  bindGo(view);
 }
 
 function aiPrompt(ym, a) {

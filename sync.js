@@ -68,8 +68,12 @@ function applyRemote(key, data) {
     } else state.days[id] = data;
   } else if (kind === 'month') {
     if (deleted) delete state.months[id];
-    else if (state.months[id]) state.months[id].goals.splice(0, state.months[id].goals.length, ...(data.goals || []));
-    else state.months[id] = { goals: data.goals || [] };
+    else if (state.months[id]) {
+      const m = state.months[id];
+      m.goals.splice(0, m.goals.length, ...(data.goals || [])); // in place: open screens keep their reference
+      Object.keys(m).forEach((k) => { if (k !== 'goals' && !(k in data)) delete m[k]; });
+      Object.entries(data).forEach(([k, v]) => { if (k !== 'goals') m[k] = v; }); // e.g. reviewedAt
+    } else state.months[id] = { ...data, goals: data.goals || [] };
   }
   sync.snap[key] = deleted ? TOMBSTONE : stable(data);
 }
