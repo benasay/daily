@@ -175,13 +175,13 @@ function renderToday(view, date) {
     <div class="goal-list">
       ${goals.map((g) => g.type === 'number' ? `
         <label class="goal" data-id="${g.id}">
-          <span class="box"></span>
+          <span class="box"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg></span>
           <span class="name">${esc(g.name)}<br><span class="meta">Goal ${esc(targetText(g))}</span></span>
           <input class="num" type="number" inputmode="decimal" step="any" placeholder="${esc(g.unit || '—')}"
                  value="${esc(entry.values?.[g.id] ?? '')}" aria-label="${esc(g.name)} value">
         </label>` : `
         <button class="goal" data-id="${g.id}" aria-pressed="false">
-          <span class="box"></span>
+          <span class="box"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg></span>
           <span class="name">${esc(g.name)}</span>
         </button>`).join('')}
     </div>
@@ -199,13 +199,12 @@ function renderToday(view, date) {
       const on = isHit(g, e);
       if (on) n++;
       el.classList.toggle('on', on);
-      el.querySelector('.box').textContent = on ? '✕' : '';
-      if (el.tagName === 'BUTTON') el.setAttribute('aria-pressed', on);
+            if (el.tagName === 'BUTTON') el.setAttribute('aria-pressed', on);
     });
     const s = document.getElementById('score');
     s.textContent = n;
     if (last !== -1 && n !== last) { s.classList.add('bump'); setTimeout(() => s.classList.remove('bump'), 180); }
-    if (last !== -1 && n > last && n === goals.length && goals.length) toast('Perfect day ✕ all of them');
+    if (last !== -1 && n > last && n === goals.length && goals.length) toast('Perfect day: every goal hit');
     last = n;
     view.querySelectorAll('.pip').forEach((p, i) => p.classList.toggle('on', i < n));
   };
@@ -285,7 +284,7 @@ function renderMonth(view, ym) {
                   const v = d.entry.values?.[g.id];
                   return `<td class="v ${isHit(g, d.entry) ? 'hit' : ''}">${v ?? ''}</td>`;
                 }
-                return `<td class="x">${isHit(g, d.entry) ? '✕' : ''}</td>`;
+                return `<td class="x">${isHit(g, d.entry) ? '✓' : ''}</td>`;
               }).join('')}
               <td class="tot">${d.logged ? d.score : ''}</td>
             </tr>`).join('')}
