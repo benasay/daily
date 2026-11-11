@@ -110,6 +110,36 @@ function targetText(g) {
   return `${g.dir === 'atLeast' ? '≥' : '≤'} ${g.target}${g.unit ? ' ' + g.unit : ''}`;
 }
 
+
+/* ---------- Haptics ----------
+   Android: the standard Vibration API.
+   iPhone: Safari doesn't support that API, but on iOS 18+ flipping a native switch
+   (<input type="checkbox" switch>) plays a system haptic. We flip a hidden one.
+   Only works in response to a tap/swipe; silently does nothing on older iOS. */
+const HAPTIC_KEY = 'tally-haptics'; // per-device preference
+const hapticsOn = () => localStorage.getItem(HAPTIC_KEY) !== 'off';
+function iosTick() {
+  const label = document.createElement('label');
+  label.setAttribute('aria-hidden', 'true');
+  label.style.display = 'none';
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.setAttribute('switch', '');
+  label.appendChild(input);
+  document.head.appendChild(label);
+  label.click();
+  label.remove();
+}
+/** kind: 'tap' (toggle, page turn) | 'success' (perfect day, finished review) */
+function haptic(kind = 'tap') {
+  if (!hapticsOn()) return;
+  try {
+    if (navigator.vibrate) { navigator.vibrate(kind === 'success' ? [14, 70, 14, 70, 28] : 10); return; }
+    iosTick();
+    if (kind === 'success') { setTimeout(iosTick, 110); setTimeout(iosTick, 220); }
+  } catch (e) { /* haptics are a nice-to-have */ }
+}
+
 /* ---------- toast ---------- */
 let toastTimer;
 function toast(msg) {
@@ -223,7 +253,7 @@ function renderToday(view, date) {
     const s = document.getElementById('score');
     s.textContent = n;
     if (last !== -1 && n !== last) { s.classList.add('bump'); setTimeout(() => s.classList.remove('bump'), 180); }
-    if (last !== -1 && n > last && n === goals.length && goals.length) toast('Perfect day: every goal hit');
+    if (last !== -1 && n > last && n === goals.length && goals.length) { toast('Perfect day: every goal hit'); setTimeout(() => haptic('success'), 120); }
     last = n;
     view.querySelectorAll('.pip').forEach((p, i) => p.classList.toggle('on', i < n));
   };
@@ -238,12 +268,14 @@ function renderToday(view, date) {
 
   view.querySelectorAll('button.goal').forEach((el) => el.addEventListener('click', () => {
     e.hits[el.dataset.id] = !e.hits[el.dataset.id];
-    if (navigator.vibrate) navigator.vibrate(8);
+    haptic();
     refresh(); save();
   }));
   view.querySelectorAll('label.goal input.num').forEach((inp) => inp.addEventListener('input', () => {
     const id = inp.closest('.goal').dataset.id;
+    const g = goals.find((x) => x.id === id), wasHit = isHit(g, e);
     if (inp.value === '') delete e.values[id]; else e.values[id] = Number(inp.value);
+    if (isHit(g, e) !== wasHit) haptic();
     refresh(); save();
   }));
   document.getElementById('note').addEventListener('input', (ev) => { e.note = ev.target.value; save(); updateLogStreak(); });
@@ -317,7 +349,7 @@ function animateEnter(view) {
 // Arrow buttons (and the "fill in yesterday" banner) anywhere in the app
 document.addEventListener('click', (e) => {
   const b = e.target.closest('[data-page]');
-  if (b && !b.disabled) pageTo(b.dataset.page);
+  if (b && !b.disabled) { haptic(); pageTo(b.dataset.page); }
 });
 
 (function enableSwipe() {
@@ -367,7 +399,7 @@ document.addEventListener('click', (e) => {
     const far = Math.abs(dx) > view.offsetWidth * 0.22;
     const flick = Math.abs(v) > 0.35 && Math.sign(v) === Math.sign(dx) && Math.abs(dx) > 24;
     if ((far || flick) && pageTargets()?.[dir]) {
-      if (navigator.vibrate) navigator.vibrate(6);
+      haptic();
       pageTo(dir);
     } else springBack(view);
   };
@@ -878,6 +910,7 @@ function renderReview(view, ym, step, opt) {
       save(true);
       reviewDraft = null;
       toast(`${nName} is set. ${kept.length} goals`);
+      haptic('success');
       go(next <= ymOf(todayStr()) ? '#today' : `#goals/${next}`);
     });
   }
@@ -1041,7 +1074,7 @@ function renderStory(view, ym, a, startAtEnd) {
     root.classList.remove('paused'); paused = false;
     if (held > 300 || moved || e.type === 'pointercancel') return; // that was a hold
     const r = root.getBoundingClientRect();
-    if (e.clientX - r.left < r.width * 0.3) show(idx - 1); else if (!slides[idx].final) show(idx + 1);
+    if (e.clientX - r.left < r.width * 0.3) { if (idx > 0) haptic(); show(idx - 1); } else if (!slides[idx].final) { haptic(); show(idx + 1); }
   };
   root.addEventListener('pointerup', release);
   root.addEventListener('pointercancel', release);
@@ -1300,6 +1333,12 @@ function renderGoals(view, ym) {
     <p class="help">Have older months in a paper journal? Turn photos of the pages into Tally data.</p>
     <div class="actions"><a class="btn" href="#import" style="text-decoration:none">Import from photo</a></div>
 
+    <h2>Feedback</h2>
+    <label class="card row spread setting">
+      <span>Vibration on taps and swipes<br><span class="help">On iPhone this needs iOS 18 or later.</span></span>
+      <input type="checkbox" switch id="hapticToggle" ${hapticsOn() ? 'checked' : ''}>
+    </label>
+
     <h2>Backup</h2>
     <p class="help">Your data lives only on this device. Export a backup now and then (it's a small file). Import restores it on any device.</p>
     <div class="actions">
@@ -1344,6 +1383,10 @@ function renderGoals(view, ym) {
     if (!confirm(`Replace this month's goals with ${monthLabel(prevYm)}'s?`)) return;
     state.months[ym].goals = state.months[prevYm].goals.map((g) => ({ ...g }));
     rerender();
+  });
+  document.getElementById('hapticToggle').addEventListener('change', (e) => {
+    localStorage.setItem(HAPTIC_KEY, e.target.checked ? 'on' : 'off');
+    if (e.target.checked) haptic();
   });
   document.getElementById('export').addEventListener('click', () => {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
