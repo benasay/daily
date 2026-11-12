@@ -192,6 +192,12 @@ window.addEventListener('hashchange', route);
 /* =========================================================
    TODAY
    ========================================================= */
+/** Replay the check animation on a goal row (only on taps, never on page load). */
+function popGoal(el) {
+  el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop');
+  clearTimeout(el._popT); el._popT = setTimeout(() => el.classList.remove('pop'), 700);
+}
+
 function renderToday(view, date) {
   const today = todayStr();
   const ym = ymOf(date);
@@ -228,14 +234,14 @@ function renderToday(view, date) {
     <div class="goal-list">
       ${goals.map((g) => g.type === 'number' ? `
         <label class="goal" data-id="${g.id}">
-          <span class="box"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg></span>
+          <span class="box"><svg viewBox="0 0 16 16" aria-hidden="true"><path pathLength="1" d="M3.5 8.5l3 3 6-7"/></svg></span>
           <span class="name">${esc(g.name)}<span class="meta">${esc(targetText(g))}</span></span>
           <span class="gstreak"></span>
           <input class="num" type="number" inputmode="decimal" step="any" placeholder="${esc(g.unit || '—')}"
                  value="${esc(entry.values?.[g.id] ?? '')}" aria-label="${esc(g.name)} value">
         </label>` : `
         <button class="goal" data-id="${g.id}" aria-pressed="false">
-          <span class="box"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg></span>
+          <span class="box"><svg viewBox="0 0 16 16" aria-hidden="true"><path pathLength="1" d="M3.5 8.5l3 3 6-7"/></svg></span>
           <span class="name">${esc(g.name)}</span>
           <span class="gstreak"></span>
         </button>`).join('')}
@@ -280,13 +286,14 @@ function renderToday(view, date) {
   view.querySelectorAll('button.goal').forEach((el) => el.addEventListener('click', () => {
     e.hits[el.dataset.id] = !e.hits[el.dataset.id];
     haptic();
+    popGoal(el);
     refresh(); save();
   }));
   view.querySelectorAll('label.goal input.num').forEach((inp) => inp.addEventListener('input', () => {
     const id = inp.closest('.goal').dataset.id;
     const g = goals.find((x) => x.id === id), wasHit = isHit(g, e);
     if (inp.value === '') delete e.values[id]; else e.values[id] = Number(inp.value);
-    if (isHit(g, e) !== wasHit) haptic();
+    if (isHit(g, e) !== wasHit) { haptic(); popGoal(inp.closest('.goal')); }
     refresh(); save();
   }));
   document.getElementById('note').addEventListener('input', (ev) => { e.note = ev.target.value; save(); updateLogStreak(); });
@@ -770,18 +777,12 @@ function trendsHTML(ym) {
 /** Recaps unlock only after a month has ended. */
 const monthIsOver = (ym) => ym < ymOf(todayStr());
 const unlockLabel = (ym) => { const n = addMonths(ym, 1); return `${MONTHS[+n.slice(5) - 1]} 1`; };
-const daysLeftLabel = (ym) => {
-  const left = daysInMonth(ym) - +todayStr().slice(8);
-  return left <= 0 ? 'Last day of the month.' : `${left} day${left > 1 ? 's' : ''} to go.`;
-};
 
 function todayBanners(today) {
   const out = [];
   const ym = ymOf(today), prev = addMonths(ym, -1), dayN = +today.slice(8);
   if (state.months[prev] && !state.months[prev].reviewedAt && loggedDaysIn(prev) && dayN <= 3) {
     out.push(`<button class="banner review" data-go="#review/${prev}">Your ${MONTHS[+prev.slice(5) - 1]} recap is ready <b>→</b></button>`);
-  } else if (dayN === daysInMonth(ym) && loggedDaysIn(ym)) {
-    out.push(`<div class="banner locked">Last day of ${MONTHS[+ym.slice(5) - 1]}. Your recap unlocks tomorrow.</div>`);
   }
   const y = addDays(today, -1);
   const firstLogged = Object.keys(state.days).filter((d) => isLogged(state.days[d])).sort()[0];
@@ -1227,10 +1228,7 @@ function renderInsights(view, ym) {
 
     ${monthIsOver(ym)
       ? `<button class="banner review" data-go="#review/${ym}" style="margin-top:12px">${state.months[ym]?.reviewedAt ? 'Reviewed ✓ ' : ''}<b>${state.months[ym]?.reviewedAt ? 'Open' : 'Start'} the ${MONTHS[+ym.slice(5) - 1]} review →</b><span class="banner-sub">Recap, recommendations, and next month's goals</span></button>`
-      : `<div class="banner locked" style="margin-top:12px"><b>Your ${MONTHS[+ym.slice(5) - 1]} recap unlocks ${unlockLabel(ym)}</b><span class="banner-sub">${daysLeftLabel(ym)} Keep logging.</span></div>`}
-
-    <h2>Goal trends</h2>
-    ${trendsHTML(ym)}
+      : ''}
 
     <h2>Hit rate by goal</h2>
     <div class="card bars">
@@ -1253,6 +1251,10 @@ function renderInsights(view, ym) {
       </div>
     </div>
 
+    <details class="more inline" ${localStorage.getItem('tally-more-insights') === '1' ? 'open' : ''}>
+      <summary>More insights</summary>
+      <h2>Goal trends</h2>
+      ${trendsHTML(ym)}
     ${a.keystones.length ? `
     <h2>Ripple effect</h2>
     <p class="help" style="margin-top:-4px">Extra <i>other</i> goals hit on days you hit this one.</p>
@@ -1263,6 +1265,7 @@ function renderInsights(view, ym) {
           <div class="bar-track"><div class="bar-fill" style="width:${Math.max(0, Math.min(1, k.diff / 4)) * 100}%"></div></div>
         </div>`).join('')}
     </div>` : ''}
+    </details>
 
     <div class="actions" style="justify-content:center;margin-top:28px"><button class="btn link" id="copyAI">Copy this month for an AI review</button></div>
   `;
@@ -1271,6 +1274,7 @@ function renderInsights(view, ym) {
     try { await navigator.clipboard.writeText(text); toast('Copied. Paste it into Claude'); }
     catch { prompt('Copy this:', text); }
   });
+  view.querySelector('details.more').addEventListener('toggle', (e) => localStorage.setItem('tally-more-insights', e.target.open ? '1' : '0'));
   bindGo(view);
 }
 

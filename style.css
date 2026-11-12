@@ -536,22 +536,33 @@ body.story-mode main { max-width: none; padding: 0; }
 /* Note: quiet field */
 textarea.note { min-height: 0; font-size: 17px; padding: 12px 14px; border-color: transparent; background: var(--card); box-shadow: 0 0 0 1px var(--line) inset; resize: none; }
 
-/* Goals: one grouped list with hairline dividers */
-.goal-list { gap: 0; margin-top: 16px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
-.goal {
-  border: 0; border-radius: 0; background: transparent; min-height: 52px; padding: 12px 14px;
-  border-bottom: 1px solid var(--line); font-size: 16px;
-}
-.goal:last-child { border-bottom: 0; }
-.goal.on { background: transparent; border-color: var(--line); }
-.goal:active { background: color-mix(in srgb, var(--accent-soft) 50%, transparent); }
-.goal .box { width: 24px; height: 24px; border-radius: 50%; }
-.goal .box svg { width: 14px; height: 14px; }
-.goal .name { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+/* Goals: separate boxes, with a satisfying check */
+.goal-list { gap: 8px; margin-top: 16px; }
+.goal { min-height: 54px; padding: 13px 14px; font-size: 16px; transition: border-color .2s, background-color .25s, transform .12s; }
+.goal:active { transform: scale(.985); }
+.goal .box { width: 26px; height: 26px; border-radius: 8px; }
+.goal .box svg { width: 16px; height: 16px; }
+.goal .box svg path { stroke-dasharray: 1; stroke-dashoffset: 1; }
+.goal.on .box svg { opacity: 1; transform: none; }
+.goal.on .box svg path { stroke-dashoffset: 0; }
+.goal .name { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex: 1; }
 .goal .meta { font-size: 13px; color: var(--muted); }
 .goal .gstreak { font-size: 12px; color: var(--accent); font-weight: 500; white-space: nowrap; }
 .goal .gstreak:empty { display: none; }
 .goal input.num { width: 72px; padding: 6px 8px; font-size: 16px; background: var(--paper); border-color: transparent; }
+/* Played only when you tap (not on page load) */
+.goal.pop.on .box { animation: boxPop .42s cubic-bezier(.3,1.7,.5,1); }
+.goal.pop.on .box svg path { animation: drawCheck .28s .06s ease-out both; }
+.goal.pop.on { animation: cardFlash .6s ease-out; }
+.goal.pop:not(.on) .box { animation: boxOff .22s ease-out; }
+@keyframes boxPop { 0% { transform: scale(.7); } 55% { transform: scale(1.22); } 100% { transform: scale(1); } }
+@keyframes drawCheck { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes cardFlash {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 35%, transparent); background-color: var(--accent-soft); }
+  100% { box-shadow: 0 0 0 10px transparent; }
+}
+@keyframes boxOff { 0% { transform: scale(1); } 50% { transform: scale(.85); } 100% { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .goal.pop .box, .goal.pop .box svg path, .goal.pop { animation: none !important; } }
 
 /* Banners: one quiet line */
 .banner { font-size: 14px; padding: 10px 14px; margin-bottom: 6px; text-align: center; }
@@ -585,3 +596,8 @@ details.more[open] summary::after { transform: rotate(90deg); }
 
 /* Text-style button */
 .btn.link { border: 0; background: none; color: var(--accent); font-size: 14px; padding: 6px; }
+
+/* Review banner pops in when a recap becomes available */
+.banner.review { animation: bannerIn .5s cubic-bezier(.3,1.4,.5,1) both; }
+@keyframes bannerIn { from { opacity: 0; transform: translateY(-6px) scale(.97); } to { opacity: 1; transform: none; } }
+details.more.inline { margin-top: 26px; }
