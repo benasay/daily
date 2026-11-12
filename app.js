@@ -46,6 +46,16 @@ const round1 = (x) => Math.round(x * 10) / 10;
 
 /* ---------- state ---------- */
 let state = load();
+ensureHealth();
+
+/** Health hub data: daily steps/calories + targets (added after launch, so fill defaults in). */
+function ensureHealth() {
+  state.healthDays = state.healthDays || {};
+  state.healthCfg = state.healthCfg || {
+    steps: { dir: 'atLeast', target: 8000 },
+    calories: { dir: 'atMost', target: 2200 },
+  };
+}
 
 function load() {
   try {
@@ -157,13 +167,16 @@ function toast(msg) {
 
 /* ---------- routing ---------- */
 function route() {
-  const [tab = 'today', arg, arg2, arg3] = location.hash.replace(/^#\/?/, '').split('/');
+  const [path, query = ''] = location.hash.replace(/^#\/?/, '').split('?');
+  const [tab = 'today', arg, arg2, arg3] = path.split('/');
   document.body.classList.remove('story-mode');
   storyCleanup();
   document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
   const view = document.getElementById('view');
   const today = todayStr();
-  if (tab === 'month') renderMonth(view, arg || ymOf(today));
+  if (tab === 'auto') { receiveHealth(new URLSearchParams(query)); return; }
+  if (tab === 'health') renderHealth(view, arg && arg <= today ? arg : today);
+  else if (tab === 'month') renderMonth(view, arg || ymOf(today));
   else if (tab === 'insights') renderInsights(view, arg || ymOf(today));
   else if (tab === 'goals') renderGoals(view, arg || ymOf(today));
   else if (tab === 'review') {
@@ -184,7 +197,7 @@ document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('cli
   const [, arg] = location.hash.replace(/^#\/?/, '').split('/');
   const ym = arg ? arg.slice(0, 7) : ymOf(todayStr());
   const t = b.dataset.tab;
-  if (t === 'today') go('#today');
+  if (t === 'today' || t === 'health') go(`#${t}`);
   else go(`#${t}/${ym}`);
 }));
 window.addEventListener('hashchange', route);
@@ -315,6 +328,10 @@ function pageTargets() {
   if (tab === 'today') {
     const date = arg && arg <= today ? arg : today, nd = addDays(date, 1);
     return { prev: `#today/${addDays(date, -1)}`, next: date >= today ? null : nd >= today ? '#today' : `#today/${nd}` };
+  }
+  if (tab === 'health') {
+    const date = arg && arg <= today ? arg : today, nd = addDays(date, 1);
+    return { prev: `#health/${addDays(date, -1)}`, next: date >= today ? null : nd >= today ? '#health' : `#health/${nd}` };
   }
   if (tab === 'month' || tab === 'insights' || tab === 'goals') {
     const ym = arg || ymOf(today), n = addMonths(ym, 1);
@@ -1419,7 +1436,7 @@ function renderGoals(view, ym) {
       const data = JSON.parse(await file.text());
       if (!data.months || !data.days) throw new Error('bad file');
       if (!confirm('Replace all data on this device with this backup?')) return;
-      state = data; save(true); toast('Backup restored'); route();
+      state = data; ensureHealth(); save(true); toast('Backup restored'); route();
     } catch { alert("That file doesn't look like a Tally backup."); }
   });
 }
@@ -1735,6 +1752,171 @@ function renderImportReview(view) {
     toast(`Imported ${yms.length} month${yms.length > 1 ? 's' : ''}`);
     go(`#month/${first}`);
   });
+}
+
+
+/* =========================================================
+   HEALTH: steps + calories, filled nightly from Apple Health via a Shortcut
+   (#auto?steps=…&calories=…) or typed in by hand.
+   ========================================================= */
+const HEALTH_METRICS = [
+  { key: 'steps', label: 'Steps', unit: 'steps', icon: '<path d="M8 3c1.6 0 2.5 1.6 2.5 3.6S9.7 10 8.4 10 6 8.5 6 6.6 6.6 3 8 3zM7.2 11.5h2.6l-.3 3.2c-.1.8-.7 1.3-1.4 1.3s-1.1-.6-1-1.3zM16 7c1.4 0 2 1.4 2 3.4s-.9 3.4-2.2 3.4-2.3-1.5-2.3-3.4S14.6 7 16 7zM14.4 15h2.6l-.4 3.4c-.1.8-.7 1.3-1.3 1.3-.7 0-1.1-.6-1-1.3z"/>' },
+  { key: 'calories', label: 'Calories', unit: 'cal', icon: '<path d="M12 3c.6 3-3.5 5-3.5 9.2A4.5 4.5 0 0 0 13 17a4 4 0 0 0 4-4.2c0-2-1-3.4-2-4.5.1 1.6-.6 2.6-1.5 2.9C14 8.4 13.6 5.4 12 3z"/>' },
+];
+const fmtNum = (n) => Math.round(n).toLocaleString('en-US');
+const healthHit = (key, v) => {
+  const c = state.healthCfg[key];
+  if (v === undefined || v === null || Number.isNaN(v)) return false;
+  return c.dir === 'atLeast' ? v >= c.target : v > 0 && v <= c.target;
+};
+const healthTargetText = (key) => `${state.healthCfg[key].dir === 'atLeast' ? 'at least' : 'at most'} ${fmtNum(state.healthCfg[key].target)}`;
+
+/** Handle the link the nightly Shortcut opens: #auto?steps=8432&calories=2150[&date=YYYY-MM-DD] */
+function receiveHealth(params) {
+  const today = todayStr();
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(params.get('date') || '') && params.get('date') <= today ? params.get('date') : today;
+  const num = (v) => { if (v === null) return null; const n = parseFloat(String(v).replace(/[^0-9.]/g, '')); return Number.isFinite(n) ? n : null; };
+  const d = (state.healthDays[date] = { ...(state.healthDays[date] || {}) });
+  const got = [];
+  HEALTH_METRICS.forEach((m) => {
+    const v = num(params.get(m.key));
+    if (v === null) return;
+    d[m.key] = Math.round(v);
+    d.auto = { ...(d.auto || {}), [m.key]: true };
+    got.push(`${fmtNum(v)} ${m.unit}`);
+  });
+  d.syncedAt = new Date().toISOString();
+  save(true);
+  if (typeof syncNow === 'function') syncNow(); // push right away, before Safari is closed
+  location.replace(date === today ? '#health' : `#health/${date}`);
+  toast(got.length ? `Health updated: ${got.join(' · ')}` : 'No health numbers were in that link');
+}
+
+function renderHealth(view, date) {
+  const today = todayStr();
+  const d = parseDate(date);
+  const label = date === today ? 'Today' : date === addDays(today, -1) ? 'Yesterday' : WEEKDAYS[d.getDay()];
+  const day = state.healthDays[date] || {};
+  const ym = ymOf(date);
+  const signedIn = typeof sync !== 'undefined' && !!sync.session;
+
+  view.innerHTML = `
+    <div class="row date-head">
+      <button class="icon-btn" data-page="prev" aria-label="Previous day">‹</button>
+      <div class="title"><h1>${label}</h1><p class="sub">${MONTHS[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}</p></div>
+      <button class="icon-btn" data-page="next" aria-label="Next day" ${date >= today ? 'disabled' : ''}>›</button>
+    </div>
+
+    <div class="hcards">
+      ${HEALTH_METRICS.map((m) => {
+        const v = day[m.key], has = v !== undefined && v !== null;
+        const c = state.healthCfg[m.key];
+        const frac = has ? Math.min(1, v / c.target) : 0;
+        const hit = has && healthHit(m.key, v);
+        const over = has && c.dir === 'atMost' && v > c.target;
+        return `
+        <div class="hcard ${hit ? 'hit' : ''} ${over ? 'over' : ''}" data-k="${m.key}">
+          <div class="hring">
+            <svg viewBox="0 0 64 64" aria-hidden="true">
+              <circle class="t" cx="32" cy="32" r="27"/>
+              <circle class="f" cx="32" cy="32" r="27" pathLength="100" stroke-dasharray="0 100" data-p="${(frac * 100).toFixed(1)}" transform="rotate(-90 32 32)"/>
+            </svg>
+            <svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${m.icon}</svg>
+          </div>
+          <div class="hbody">
+            <div class="hk">${m.label}</div>
+            <input class="hv" inputmode="numeric" aria-label="${m.label}" placeholder="—" value="${has ? fmtNum(v) : ''}">
+            <div class="ht">Goal ${healthTargetText(m.key)}${has && day.auto?.[m.key] ? ' · <span class="auto">Auto</span>' : ''}</div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    ${day.syncedAt ? `<p class="help" style="text-align:center;margin-top:8px">From Apple Health at ${new Date(day.syncedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</p>` : ''}
+
+    <div class="row spread chart-head"><h2>${MONTHS[+ym.slice(5) - 1]}</h2></div>
+    ${HEALTH_METRICS.map((m) => healthMonthChart(m, ym, date)).join('')}
+
+    <details class="more" ${localStorage.getItem('tally-health-more') === '1' ? 'open' : ''}>
+      <summary>Targets & Apple Health setup</summary>
+      <h2>Targets</h2>
+      <div class="goal-edit">
+        ${HEALTH_METRICS.map((m) => `
+          <div class="ge"><div class="row">
+            <span class="name" style="flex:1;padding:8px 6px">${m.label}</span>
+            <select class="type hdir" data-k="${m.key}" aria-label="${m.label} direction">
+              <option value="atLeast" ${state.healthCfg[m.key].dir === 'atLeast' ? 'selected' : ''}>at least</option>
+              <option value="atMost" ${state.healthCfg[m.key].dir === 'atMost' ? 'selected' : ''}>at most</option>
+            </select>
+            <input class="htarget" data-k="${m.key}" inputmode="numeric" value="${state.healthCfg[m.key].target}" aria-label="${m.label} target">
+          </div></div>`).join('')}
+      </div>
+
+      <h2>Fill in automatically from Apple Health</h2>
+      ${signedIn ? '' : `<p class="warn">Sign in under Goals → Sync, here and in Safari, so numbers from the Shortcut reach this app.</p>`}
+      <ol class="steps small">
+        <li>Make sure your calorie app writes to Apple Health (in its settings, turn on <b>Apple Health</b> / <b>Health</b> and allow <b>Dietary Energy</b>).</li>
+        <li>Open the <b>Shortcuts</b> app → <b>Automation</b> → <b>+</b> → <b>Time of Day</b>. Pick 9:30 PM, <b>Daily</b>, and <b>Run Immediately</b>. Tap Next → <b>New Blank Automation</b>.</li>
+        <li>Add <b>Find Health Samples</b>: Type <b>Steps</b>, Start Date <b>is today</b>, Group By <b>Day</b>.</li>
+        <li>Add <b>Calculate Statistics</b>: <b>Sum</b> of Health Samples. Then add <b>Round Number</b> (to Ones).</li>
+        <li>Repeat steps 3–4 for Type <b>Dietary Energy</b>.</li>
+        <li>Add <b>Text</b> and paste the link below, then replace <b>STEPS</b> and <b>CAL</b> with the two rounded numbers (tap each word → choose the Rounded Number variable).</li>
+        <li>Add <b>Open URLs</b> with that Text. Done. Tap ▶ once to test: Safari should open Tally and show your numbers.</li>
+      </ol>
+      <div class="copyrow"><code id="autoLink">${location.origin}${location.pathname}#auto?steps=STEPS&calories=CAL</code></div>
+      <div class="actions"><button class="btn" id="copyLink">Copy link</button></div>
+    </details>
+  `;
+
+  // Rings fill in
+  requestAnimationFrame(() => requestAnimationFrame(() => view.querySelectorAll('.hring .f').forEach((c) => c.setAttribute('stroke-dasharray', `${c.dataset.p} 100`))));
+
+  // Manual entry
+  view.querySelectorAll('.hcard .hv').forEach((inp) => {
+    inp.addEventListener('focus', () => { inp.value = inp.value.replace(/,/g, ''); inp.select(); });
+    inp.addEventListener('change', () => {
+      const k = inp.closest('.hcard').dataset.k;
+      const n = parseFloat(inp.value.replace(/[^0-9.]/g, ''));
+      const entry = (state.healthDays[date] = { ...(state.healthDays[date] || {}) });
+      if (Number.isFinite(n)) entry[k] = Math.round(n); else delete entry[k];
+      if (entry.auto) delete entry.auto[k];
+      save(true); haptic(); renderHealth(view, date);
+    });
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') inp.blur(); });
+  });
+  view.querySelectorAll('.hdir').forEach((sel) => sel.addEventListener('change', () => { state.healthCfg[sel.dataset.k].dir = sel.value; save(true); renderHealth(view, date); }));
+  view.querySelectorAll('.htarget').forEach((inp) => inp.addEventListener('change', () => {
+    const n = parseFloat(inp.value.replace(/[^0-9.]/g, ''));
+    if (Number.isFinite(n) && n > 0) { state.healthCfg[inp.dataset.k].target = Math.round(n); save(true); }
+    renderHealth(view, date);
+  }));
+  view.querySelector('details.more').addEventListener('toggle', (e) => localStorage.setItem('tally-health-more', e.target.open ? '1' : '0'));
+  document.getElementById('copyLink').addEventListener('click', async () => {
+    const t = document.getElementById('autoLink').textContent;
+    try { await navigator.clipboard.writeText(t); toast('Link copied'); } catch { prompt('Copy this:', t); }
+  });
+}
+
+/** Month bar chart for one metric, with a dashed target line. */
+function healthMonthChart(m, ym, selDate) {
+  const n = daysInMonth(ym), today = todayStr(), c = state.healthCfg[m.key];
+  const vals = Array.from({ length: n }, (_, i) => { const dt = `${ym}-${pad(i + 1)}`; return { dt, v: dt <= today ? state.healthDays[dt]?.[m.key] : undefined }; });
+  const have = vals.filter((x) => x.v !== undefined && x.v !== null);
+  if (!have.length) return `<div class="card hchart"><div class="hc-head"><b>${m.label}</b><span class="help">No data yet this month</span></div></div>`;
+  const max = Math.max(c.target * 1.15, ...have.map((x) => x.v));
+  const W = 310, H = 90, bw = W / n;
+  const y = (v) => H - (v / max) * H;
+  const avg = have.reduce((a, x) => a + x.v, 0) / have.length;
+  const hits = have.filter((x) => healthHit(m.key, x.v)).length;
+  return `
+    <div class="card hchart">
+      <div class="hc-head"><b>${m.label}</b><span>avg ${fmtNum(avg)} · goal met ${hits}/${have.length} days</span></div>
+      <svg viewBox="0 0 ${W} ${H + 14}" preserveAspectRatio="none" aria-label="${m.label} each day this month">
+        ${vals.map((x, i) => x.v === undefined || x.v === null ? '' :
+          `<rect class="${healthHit(m.key, x.v) ? 'hit' : ''} ${x.dt === selDate ? 'sel' : ''}" x="${(i * bw + bw * 0.18).toFixed(1)}" y="${y(x.v).toFixed(1)}" width="${(bw * 0.64).toFixed(1)}" height="${(H - y(x.v)).toFixed(1)}" rx="1.5"><title>${MONTHS[+ym.slice(5) - 1].slice(0, 3)} ${i + 1}: ${fmtNum(x.v)}</title></rect>`).join('')}
+        <line class="tl" x1="0" x2="${W}" y1="${y(c.target).toFixed(1)}" y2="${y(c.target).toFixed(1)}"/>
+        ${[1, 10, 20, n].map((dd) => `<text x="${((dd - 0.5) * bw).toFixed(1)}" y="${H + 12}" text-anchor="middle">${dd}</text>`).join('')}
+      </svg>
+    </div>`;
 }
 
 /* ---------- boot ---------- */

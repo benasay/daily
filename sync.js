@@ -36,6 +36,8 @@ function localItems() {
   const out = {};
   for (const [ym, m] of Object.entries(state.months)) out[`month:${ym}`] = m;
   for (const [d, e] of Object.entries(state.days)) if (isLogged(e)) out[`day:${d}`] = e;
+  for (const [d, h] of Object.entries(state.healthDays || {})) out[`hday:${d}`] = h;
+  if (state.healthCfg) out['hcfg:main'] = state.healthCfg;
   return out;
 }
 
@@ -66,6 +68,11 @@ function applyRemote(key, data) {
       Object.keys(e).forEach((k) => delete e[k]);
       Object.assign(e, data);
     } else state.days[id] = data;
+  } else if (kind === 'hday') {
+    state.healthDays = state.healthDays || {};
+    if (deleted) delete state.healthDays[id]; else state.healthDays[id] = data;
+  } else if (kind === 'hcfg') {
+    if (!deleted) state.healthCfg = data;
   } else if (kind === 'month') {
     if (deleted) delete state.months[id];
     else if (state.months[id]) {
@@ -190,9 +197,10 @@ async function afterSignIn() {
 }
 
 function useCloud(rows) {
-  state.months = {}; state.days = {};
+  state.months = {}; state.days = {}; state.healthDays = {};
   sync.snap = {}; sync.dirty = {};
   rows.forEach((r) => applyRemote(r.key, r.data));
+  ensureHealth();
   writeLocal();
 }
 
