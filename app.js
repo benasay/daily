@@ -578,31 +578,32 @@ function drawCalendar(host, ym, days) {
 function drawYear(host, year) {
   const today = todayStr();
   const CELL = 10, GAP = 2, L = 30, T = 16;
-  const W = L + 31 * (CELL + GAP), H = T + 12 * (CELL + GAP);
+  // Only months with at least one logged day (empty months are skipped, not shown as blank rows)
+  const months = Array.from({ length: 12 }, (_, i) => `${year}-${pad(i + 1)}`).filter((ym) => loggedDaysIn(ym) > 0);
+  const W = L + 31 * (CELL + GAP), H = T + Math.max(months.length, 1) * (CELL + GAP);
   let rects = '', logged = 0, sum = 0, n = 0;
-  for (let m = 1; m <= 12; m++) {
-    const ym = `${year}-${pad(m)}`;
+  months.forEach((ym, row) => {
     for (let d = 1; d <= daysInMonth(ym); d++) {
       const date = `${ym}-${pad(d)}`;
       if (date > today) continue;
       const frac = dayFraction(date);
       if (frac !== null) { logged++; sum += frac; n++; }
       const lvl = frac === null ? 'none' : heatLevel(frac);
-      rects += `<rect class="heat-${lvl}" data-date="${date}" x="${L + (d - 1) * (CELL + GAP)}" y="${T + (m - 1) * (CELL + GAP)}" width="${CELL}" height="${CELL}" rx="2"/>`;
+      rects += `<rect class="heat-${lvl}" data-date="${date}" x="${L + (d - 1) * (CELL + GAP)}" y="${T + row * (CELL + GAP)}" width="${CELL}" height="${CELL}" rx="2"/>`;
     }
-  }
+  });
   host.innerHTML = `
     <div class="chart year">
       <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Every day of ${year}, shaded by goals hit">
         <g class="axis">
-          ${MONTHS.map((mn, i) => `<text x="${L - 6}" y="${T + i * (CELL + GAP) + CELL - 1.5}" text-anchor="end">${mn.slice(0, 3)}</text>`).join('')}
+          ${months.map((ym, i) => `<text x="${L - 6}" y="${T + i * (CELL + GAP) + CELL - 1.5}" text-anchor="end">${MONTHS[+ym.slice(5) - 1].slice(0, 3)}</text>`).join('')}
           ${[1, 10, 20, 31].map((d) => `<text x="${L + (d - 1) * (CELL + GAP) + CELL / 2}" y="${T - 5}" text-anchor="middle">${d}</text>`).join('')}
         </g>
         ${rects}
       </svg>
     </div>
     ${heatLegend()}
-    <p class="help" style="margin:6px 0 0">${logged ? `${logged} day${logged > 1 ? 's' : ''} logged in ${year} · ${Math.round((sum / n) * 100)}% of goals hit on average.` : `No days logged in ${year} yet.`} Tap a square for details.</p>`;
+    <p class="help" style="margin:6px 0 0">${logged ? `${logged} day${logged > 1 ? 's' : ''} logged in ${year} · ${Math.round((sum / n) * 100)}% of goals hit on average.` : `No days logged in ${year} yet.`}${logged ? ' Tap a square for details.' : ''}</p>`;
 
   const svg = host.querySelector('svg');
   const tip = document.createElement('div');

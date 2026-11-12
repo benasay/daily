@@ -1,6 +1,6 @@
 // Network-first: when online, always load the newest version from the site
 // (so updates show up the next time you open the app). Offline, fall back to the cached copy.
-const CACHE = 'tally-v14';
+const CACHE = 'tally-v15';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'sync.js', 'manifest.webmanifest', 'icon-180.png', 'icon-192.png', 'icon-512.png', 'icon.svg'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES))); self.skipWaiting(); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k))))); self.clients.claim(); });
