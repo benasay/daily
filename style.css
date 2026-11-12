@@ -276,10 +276,10 @@ table.imp-grid tbody tr { cursor: default; }
 .seg button[aria-selected="true"] { background: var(--card); color: var(--accent); font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
 
 /* Line chart: daily (light) + 7-day average (bold) */
-.chart .series.daily { stroke: color-mix(in srgb, var(--accent) 40%, var(--card)); stroke-width: 1.5; }
+.chart .series.daily { stroke: var(--accent); stroke-width: 2; }
 .chart .series.avg { stroke: var(--accent); stroke-width: 2.5; }
-.chart .pt { fill: color-mix(in srgb, var(--accent) 55%, var(--card)); }
-.chart .pt.sel { fill: var(--accent); }
+.chart .pt { fill: var(--accent); }
+.chart .pt.sel { fill: var(--ink); }
 .legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin: 0 0 6px 2px; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .legend .sw { display: inline-block; width: 16px; height: 0; border-top: 2px solid; border-radius: 1px; }

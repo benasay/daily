@@ -540,16 +540,6 @@ const heatLegend = () => `
     <i class="heat-none" style="margin-left:10px"></i><span>Not logged</span>
   </div>`;
 
-/** Trailing 7-day average of goals hit (logged days only; needs 3+ logged days in the window). */
-function rollingAvg(date) {
-  const vals = [];
-  for (let i = 0; i < 7; i++) {
-    const d = addDays(date, -i);
-    if (isLogged(state.days[d])) vals.push(score(d));
-  }
-  return vals.length >= 3 ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
-}
-
 /** Goal rings: one mini progress ring per goal, filled to its hit rate for the month. */
 function drawRings(host, ym) {
   const a = analyze(ym);
@@ -668,15 +658,6 @@ function drawLineChart(host, ym, days, maxY) {
     prevDay = d.day;
   });
 
-  // 7-day rolling average (uses the previous month's days too, so day 1 isn't empty)
-  const avgPts = days.map((d) => ({ day: d.day, v: rollingAvg(d.date) })).filter((p) => p.v !== null);
-  let avgPath = '', prevAvg = -10;
-  avgPts.forEach((p) => {
-    avgPath += `${p.day === prevAvg + 1 ? 'L' : 'M'}${x(p.day).toFixed(1)},${y(p.v).toFixed(1)} `;
-    prevAvg = p.day;
-  });
-  const avgByDay = Object.fromEntries(avgPts.map((p) => [p.day, p.v]));
-
   const yTicks = [];
   const step = ymax > 8 ? 2 : 1;
   for (let v = 0; v <= ymax; v += step) yTicks.push(v);
@@ -684,11 +665,7 @@ function drawLineChart(host, ym, days, maxY) {
 
   host.innerHTML = `
     <div class="chart">
-      <div class="legend" aria-hidden="true">
-        <span><i class="sw daily"></i>Daily</span>
-        <span><i class="sw avg"></i>7-day average</span>
-      </div>
-      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Goals hit each day in ${monthLabel(ym)}, with a 7-day average">
+      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Goals hit each day in ${monthLabel(ym)}>
         <g class="grid">${yTicks.map((v) => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>`).join('')}</g>
         <g class="axis">
           ${yTicks.map((v) => `<text x="${L - 8}" y="${y(v) + 3}" text-anchor="end">${v}</text>`).join('')}
@@ -697,7 +674,6 @@ function drawLineChart(host, ym, days, maxY) {
         <line class="cross" id="cross" y1="${T}" y2="${H - B}" style="display:none"/>
         <path class="series daily" d="${path}"/>
         ${logged.map((d) => `<circle class="pt" data-day="${d.day}" cx="${x(d.day)}" cy="${y(d.score)}" r="3.5"/>`).join('')}
-        <path class="series avg" d="${avgPath}"/>
         <rect x="${L}" y="0" width="${W - L - R}" height="${H}" fill="transparent" id="hit"/>
       </svg>
       ${logged.length ? '' : '<div class="empty" style="position:absolute;inset:0;display:grid;place-items:center">No days logged yet</div>'}
@@ -719,8 +695,7 @@ function drawLineChart(host, ym, days, maxY) {
     cross.setAttribute('x1', x(best.day)); cross.setAttribute('x2', x(best.day)); cross.style.display = '';
     host.querySelectorAll('.pt').forEach((p) => p.classList.toggle('sel', +p.dataset.day === best.day));
     const note = best.entry.note ? `<br>${esc(best.entry.note.length > 70 ? best.entry.note.slice(0, 70) + '…' : best.entry.note)}` : '';
-    const av = avgByDay[best.day];
-    tip.innerHTML = `<b>${MONTHS[+ym.slice(5) - 1].slice(0, 3)} ${best.day} · ${best.score} / ${maxY}</b>${av !== undefined ? ` <span style="opacity:.8">· 7-day avg ${round1(av)}</span>` : ''}${note}`;
+    tip.innerHTML = `<b>${MONTHS[+ym.slice(5) - 1].slice(0, 3)} ${best.day} · ${best.score} / ${maxY}</b>${note}`;
     tip.style.display = '';
     const pad = 14;
     tip.style.left = `${Math.min(Math.max(px + pad, 110), r.width - 110 + pad)}px`;
