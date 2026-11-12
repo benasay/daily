@@ -463,7 +463,7 @@ function renderMonth(view, ym) {
     <div class="row spread chart-head">
       <h2 id="chartTitle">Goals hit per day</h2>
       <div class="seg" role="tablist" aria-label="Chart type">
-        ${['line', 'calendar', 'year'].map((v) => `<button role="tab" data-view="${v}" aria-selected="${chartView() === v}">${v[0].toUpperCase() + v.slice(1)}</button>`).join('')}
+        ${['line', 'calendar', 'rings', 'year'].map((v) => `<button role="tab" data-view="${v}" aria-selected="${chartView() === v}">${v[0].toUpperCase() + v.slice(1)}</button>`).join('')}
       </div>
     </div>
     <div class="card chart-wrap" id="chart"></div>
@@ -507,9 +507,10 @@ function renderMonth(view, ym) {
   const drawChart = () => {
     const v = chartView(), host = document.getElementById('chart');
     view.querySelectorAll('.seg button').forEach((btn) => btn.setAttribute('aria-selected', btn.dataset.view === v));
-    document.getElementById('chartTitle').textContent = v === 'year' ? `${ym.slice(0, 4)} at a glance` : 'Goals hit per day';
+    document.getElementById('chartTitle').textContent = v === 'year' ? `${ym.slice(0, 4)} at a glance` : v === 'rings' ? 'Goal hit rates' : 'Goals hit per day';
     if (v === 'calendar') drawCalendar(host, ym, days);
     else if (v === 'year') drawYear(host, ym.slice(0, 4));
+    else if (v === 'rings') drawRings(host, ym);
     else drawLineChart(host, ym, days, goals.length);
   };
   view.querySelectorAll('.seg button').forEach((btn) => btn.addEventListener('click', () => {
@@ -521,7 +522,7 @@ function renderMonth(view, ym) {
 
 /* ---------- chart helpers ---------- */
 const CHART_KEY = 'tally-chart-view'; // remembers Line / Calendar / Year (display preference only)
-const chartView = () => (['line', 'calendar', 'year'].includes(localStorage.getItem(CHART_KEY)) ? localStorage.getItem(CHART_KEY) : 'line');
+const chartView = () => (['line', 'calendar', 'rings', 'year'].includes(localStorage.getItem(CHART_KEY)) ? localStorage.getItem(CHART_KEY) : 'line');
 
 /** Share of that month's goals hit on a date (0–1), or null if the day wasn't logged. */
 function dayFraction(date) {
@@ -547,6 +548,31 @@ function rollingAvg(date) {
     if (isLogged(state.days[d])) vals.push(score(d));
   }
   return vals.length >= 3 ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+}
+
+/** Goal rings: one mini progress ring per goal, filled to its hit rate for the month. */
+function drawRings(host, ym) {
+  const a = analyze(ym);
+  if (!a.N) { host.innerHTML = '<div class="empty">No days logged yet</div>'; return; }
+  const C = 2 * Math.PI * 22;
+  host.innerHTML = `
+    <div class="rings">
+      ${a.perGoal.map((p, i) => `
+        <div class="gring" style="--i:${i}" title="${esc(p.g.name)}: ${p.hits} of ${a.N} days${p.bestStreak >= 2 ? ` · best streak ${p.bestStreak}` : ''}">
+          <svg viewBox="0 0 56 56" aria-hidden="true">
+            <circle class="t" cx="28" cy="28" r="22"/>
+            <circle class="f ${p.rate >= 0.999 ? 'full' : ''}" cx="28" cy="28" r="22" stroke-dasharray="0 ${C}" data-len="${(p.rate * C).toFixed(2)}" transform="rotate(-90 28 28)"/>
+          </svg>
+          <div class="gp ${p.rate >= 0.995 ? 'full' : ''}">${Math.round(p.rate * 100)}<small>%</small></div>
+          <div class="gn">${esc(p.g.name)}</div>
+          <div class="gs">${p.hits}/${a.N}${p.g.type === 'number' && p.valueAvg !== null ? ` · avg ${round1(p.valueAvg)}${esc(p.g.unit || '')}` : ''}</div>
+        </div>`).join('')}
+    </div>
+    <p class="help" style="margin:10px 0 0">Share of logged days you hit each goal.</p>`;
+  // Fill the rings after they're on screen so they animate in
+  requestAnimationFrame(() => requestAnimationFrame(() => host.querySelectorAll('.gring .f').forEach((c) => {
+    c.setAttribute('stroke-dasharray', `${c.dataset.len} ${C}`);
+  })));
 }
 
 function drawCalendar(host, ym, days) {
