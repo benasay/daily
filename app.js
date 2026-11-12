@@ -212,29 +212,34 @@ function renderToday(view, date) {
 
     ${date === today ? todayBanners(today) : ''}
 
-    <div class="score" aria-live="polite"><span class="n" id="score">0</span><span class="of">/ ${goals.length}</span></div>
-    <div class="pips" id="pips">${goals.map(() => '<span class="pip"></span>').join('')}</div>
-    <div class="streak-pill-wrap"><span class="streak-pill" id="logStreak" hidden></span></div>
+    <div class="ring-wrap" aria-live="polite">
+      <svg class="ring" viewBox="0 0 120 120" aria-hidden="true">
+        <circle class="ring-track" cx="60" cy="60" r="52"/>
+        <circle class="ring-fill" id="ringFill" cx="60" cy="60" r="52" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 60 60)"/>
+      </svg>
+      <div class="ring-center"><span class="n" id="score">0</span><span class="of" id="scoreOf">of ${goals.length}</span></div>
+    </div>
+    <p class="streak-line" id="logStreak"></p>
 
     <label class="sr-only" for="note">One sentence for the day</label>
-    <textarea class="note" id="note" maxlength="240" placeholder="One sentence for the day…">${esc(entry.note)}</textarea>
+    <textarea class="note" id="note" maxlength="240" rows="2" placeholder="One sentence for the day…">${esc(entry.note)}</textarea>
 
-    <h2>Goals</h2>
     ${goals.length ? '' : `<div class="empty">No goals this month yet. <a href="#goals/${ym}">Add some</a>.</div>`}
     <div class="goal-list">
       ${goals.map((g) => g.type === 'number' ? `
         <label class="goal" data-id="${g.id}">
           <span class="box"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg></span>
-          <span class="name">${esc(g.name)}<br><span class="meta">Goal ${esc(targetText(g))}<span class="gstreak"></span></span></span>
+          <span class="name">${esc(g.name)}<span class="meta">${esc(targetText(g))}</span></span>
+          <span class="gstreak"></span>
           <input class="num" type="number" inputmode="decimal" step="any" placeholder="${esc(g.unit || '—')}"
                  value="${esc(entry.values?.[g.id] ?? '')}" aria-label="${esc(g.name)} value">
         </label>` : `
         <button class="goal" data-id="${g.id}" aria-pressed="false">
           <span class="box"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7"/></svg></span>
-          <span class="name">${esc(g.name)}<span class="meta gstreak-line"><span class="gstreak"></span></span></span>
+          <span class="name">${esc(g.name)}</span>
+          <span class="gstreak"></span>
         </button>`).join('')}
     </div>
-    <div class="saved"></div>
   `;
 
   const e = state.days[date] || (state.days[date] = { note: '', hits: {}, values: {} });
@@ -251,23 +256,24 @@ function renderToday(view, date) {
       if (el.tagName === 'BUTTON') el.setAttribute('aria-pressed', on);
       // Per-goal streak (counts today once it's hit; otherwise shows the streak you can extend)
       const st = goalStreak(g.id, date);
-      el.querySelector('.gstreak').textContent = st >= 2 ? `${g.type === 'number' ? ' · ' : ''}${st}-day streak${on ? '' : ', keep it going'}` : '';
-      el.querySelector('.gstreak-line')?.classList.toggle('show', st >= 2);
+      el.querySelector('.gstreak').textContent = st >= 3 ? `${st} days` : '';
     });
     updateLogStreak();
     const s = document.getElementById('score');
     s.textContent = n;
+    const perfect = n === goals.length && goals.length > 0;
+    document.getElementById('ringFill').setAttribute('stroke-dasharray', `${goals.length ? (n / goals.length) * 100 : 0} 100`);
+    view.querySelector('.ring-wrap').classList.toggle('perfect', perfect);
+    document.getElementById('scoreOf').textContent = perfect ? 'perfect day' : `of ${goals.length}`;
     if (last !== -1 && n !== last) { s.classList.add('bump'); setTimeout(() => s.classList.remove('bump'), 180); }
-    if (last !== -1 && n > last && n === goals.length && goals.length) { toast('Perfect day: every goal hit'); setTimeout(() => haptic('success'), 120); }
+    if (last !== -1 && n > last && perfect) setTimeout(() => haptic('success'), 120);
     last = n;
-    view.querySelectorAll('.pip').forEach((p, i) => p.classList.toggle('on', i < n));
   };
   const updateLogStreak = () => {
     const pill = document.getElementById('logStreak');
     if (!pill) return;
     const n = logStreak(date);
-    pill.hidden = n < 2;
-    pill.textContent = `${n} ${date === today ? 'nights' : 'days'} logged in a row`;
+    pill.textContent = n >= 2 ? `${n}-day streak` : '';
   };
   refresh();
 
@@ -773,7 +779,7 @@ function todayBanners(today) {
   const out = [];
   const ym = ymOf(today), prev = addMonths(ym, -1), dayN = +today.slice(8);
   if (state.months[prev] && !state.months[prev].reviewedAt && loggedDaysIn(prev) && dayN <= 3) {
-    out.push(`<button class="banner review" data-go="#review/${prev}">${MONTHS[+prev.slice(5) - 1]} is done. <b>Review your month and set up ${MONTHS[+ym.slice(5) - 1]} →</b></button>`);
+    out.push(`<button class="banner review" data-go="#review/${prev}">Your ${MONTHS[+prev.slice(5) - 1]} recap is ready <b>→</b></button>`);
   } else if (dayN === daysInMonth(ym) && loggedDaysIn(ym)) {
     out.push(`<div class="banner locked">Last day of ${MONTHS[+ym.slice(5) - 1]}. Your recap unlocks tomorrow.</div>`);
   }
@@ -782,7 +788,7 @@ function todayBanners(today) {
   if (firstLogged && firstLogged < y && !isLogged(state.days[y])) {
     let missed = 0;
     for (let i = 1; i <= 7; i++) { const d = addDays(today, -i); if (d >= firstLogged && !isLogged(state.days[d])) missed++; }
-    out.push(`<button class="banner missed" data-page="prev">${missed > 1 ? `You missed ${missed} of the last 7 days.` : `You didn't log yesterday.`} <b>Fill in yesterday →</b></button>`);
+    out.push(`<button class="banner missed" data-page="prev">${missed > 1 ? `${missed} days missed this week` : `Yesterday isn't logged`} · <b>Fill it in</b></button>`);
   }
   return out.join('');
 }
@@ -1258,9 +1264,7 @@ function renderInsights(view, ym) {
         </div>`).join('')}
     </div>` : ''}
 
-    <h2>Deeper analysis</h2>
-    <p class="help">Copy this month's data as a ready-made prompt, then paste it into Claude for a written review and suggested goals for next month.</p>
-    <div class="actions"><button class="btn primary" id="copyAI">Copy month for AI review</button></div>
+    <div class="actions" style="justify-content:center;margin-top:28px"><button class="btn link" id="copyAI">Copy this month for an AI review</button></div>
   `;
   document.getElementById('copyAI').addEventListener('click', async () => {
     const text = aiPrompt(ym, a);
@@ -1298,35 +1302,29 @@ function renderGoals(view, ym) {
 
   view.innerHTML = `
     ${monthNav(ym, 'goals')}
-    <p class="sub" style="text-align:center;margin-top:-6px">Goals for this month. Changes apply to every day in ${MONTHS[+ym.slice(5) - 1]}.</p>
-
-    <div id="syncCard"></div>
-
-    <h2>Goals</h2>
     <div class="goal-edit">
       ${goals.map((g, i) => `
         <div class="ge" data-i="${i}">
           <div class="row">
             <input class="name" value="${esc(g.name)}" aria-label="Goal name" placeholder="Goal name">
+            <select class="type" aria-label="Goal type">
+              <option value="check" ${g.type === 'check' ? 'selected' : ''}>Yes/no</option>
+              <option value="number" ${g.type === 'number' ? 'selected' : ''}>Number</option>
+            </select>
             <div class="ctrl">
               <button data-act="up" aria-label="Move up" ${i === 0 ? 'disabled' : ''}>↑</button>
               <button data-act="down" aria-label="Move down" ${i === goals.length - 1 ? 'disabled' : ''}>↓</button>
               <button data-act="del" aria-label="Delete">✕</button>
             </div>
           </div>
-          <div class="num-opts">
-            <select class="type" aria-label="Goal type">
-              <option value="check" ${g.type === 'check' ? 'selected' : ''}>Yes / no</option>
-              <option value="number" ${g.type === 'number' ? 'selected' : ''}>Number</option>
-            </select>
-            ${g.type === 'number' ? `
+          ${g.type === 'number' ? `<div class="num-opts">
               <select class="dir" aria-label="Direction">
                 <option value="atMost" ${g.dir !== 'atLeast' ? 'selected' : ''}>at most</option>
                 <option value="atLeast" ${g.dir === 'atLeast' ? 'selected' : ''}>at least</option>
               </select>
               <input class="target" type="number" inputmode="decimal" step="any" value="${esc(g.target)}" aria-label="Target">
-              <input class="unit" value="${esc(g.unit || '')}" placeholder="unit" aria-label="Unit">` : ''}
-          </div>
+              <input class="unit" value="${esc(g.unit || '')}" placeholder="unit" aria-label="Unit">
+          </div>` : ''}
         </div>`).join('')}
     </div>
     <div class="actions">
@@ -1334,24 +1332,31 @@ function renderGoals(view, ym) {
       ${state.months[prevYm] ? `<button class="btn" id="copyPrev">Copy ${MONTHS[+prevYm.slice(5) - 1]}'s goals</button>` : ''}
     </div>
 
-    <h2>Import past months</h2>
-    <p class="help">Have older months in a paper journal? Turn photos of the pages into Tally data.</p>
-    <div class="actions"><a class="btn" href="#import" style="text-decoration:none">Import from photo</a></div>
+    <details class="more" ${localStorage.getItem('tally-more-open') === '1' ? 'open' : ''}>
+      <summary>Sync, import & settings</summary>
 
-    <h2>Feedback</h2>
-    <label class="card row spread setting">
-      <span>Vibration on taps and swipes<br><span class="help">On iPhone this needs iOS 18 or later.</span></span>
-      <input type="checkbox" switch id="hapticToggle" ${hapticsOn() ? 'checked' : ''}>
-    </label>
+      <div id="syncCard"></div>
 
-    <h2>Backup</h2>
-    <p class="help">Your data lives only on this device. Export a backup now and then (it's a small file). Import restores it on any device.</p>
-    <div class="actions">
-      <button class="btn" id="export">Export backup</button>
-      <label class="btn" for="importFile" style="display:inline-block">Import backup</label>
-      <input type="file" id="importFile" accept="application/json,.json" hidden>
-    </div>
+      <h2>Import past months</h2>
+      <p class="help">Turn photos of old journal pages into Tally data.</p>
+      <div class="actions"><a class="btn" href="#import" style="text-decoration:none">Import from photo</a></div>
+
+      <h2>Vibration</h2>
+      <label class="card row spread setting">
+        <span>Haptics on taps and swipes<br><span class="help">On iPhone this needs iOS 18 or later.</span></span>
+        <input type="checkbox" switch id="hapticToggle" ${hapticsOn() ? 'checked' : ''}>
+      </label>
+
+      <h2>Backup file</h2>
+      <p class="help">Sync already backs up to the cloud. A file is an extra copy you keep yourself.</p>
+      <div class="actions">
+        <button class="btn" id="export">Export backup</button>
+        <label class="btn" for="importFile" style="display:inline-block">Import backup</label>
+        <input type="file" id="importFile" accept="application/json,.json" hidden>
+      </div>
+    </details>
   `;
+  view.querySelector('details.more').addEventListener('toggle', (e) => localStorage.setItem('tally-more-open', e.target.open ? '1' : '0'));
 
   if (window.renderSyncCard) window.renderSyncCard(document.getElementById('syncCard'));
   const rerender = () => { save(true); renderGoals(view, ym); };
